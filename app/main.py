@@ -53,6 +53,7 @@ async def lifespan(app):
 
 
 def create_app():
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     app = FastAPI(
         title="Team 14 Social Media API",
         version="2.0.0",
@@ -119,6 +120,8 @@ def create_app():
                 "Referrer-Policy": "no-referrer",
             }
         )
+        if "/oauth/" in request.url.path:
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(ApiError)

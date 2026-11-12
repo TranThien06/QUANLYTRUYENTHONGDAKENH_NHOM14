@@ -131,14 +131,17 @@ def workspace_detail(workspace_id: Id):
         return ok(db.one("SELECT * FROM workspaces WHERE workspace_id=%s", (workspace_id,)))
 
 
-@router.get("/workspaces/{workspace_id}/access", dependencies=[Depends(workspace())])
-def workspace_access(workspace_id: Id, request: Request):
+@router.get("/workspaces/{workspace_id}/access")
+@router.get("/workspaces/{workspace_id}/me/permissions")
+def my_workspace_permissions(workspace_id: Id, member=Depends(workspace())):
     with transaction() as db:
-        permissions = db.all(
-            "SELECT p.code FROM role_permissions rp JOIN permissions p ON p.permission_id=rp.permission_id WHERE rp.role_id=%s",
-            (request.state.member["role_id"],),
+        rows = db.all(
+            """SELECT p.code FROM role_permissions rp
+            JOIN permissions p ON p.permission_id=rp.permission_id
+            WHERE rp.role_id=%s ORDER BY p.code""",
+            (member["role_id"],),
         )
-    return ok({"role": request.state.member["role_code"], "permissions": [p["code"] for p in permissions]})
+    return ok({"role": member["role_code"], "permissions": [row["code"] for row in rows]})
 
 
 @router.patch("/workspaces/{workspace_id}", dependencies=[Depends(workspace("workspace.manage"))])
