@@ -65,6 +65,7 @@ def create_app():
     app.mount("/assets", StaticFiles(directory=frontend), name="frontend")
 
     @app.get("/", include_in_schema=False)
+    @app.get("/verify-email", include_in_schema=False)
     @app.get("/accept-invitation", include_in_schema=False)
     def workspace_ui():
         return FileResponse(frontend / "index.html")

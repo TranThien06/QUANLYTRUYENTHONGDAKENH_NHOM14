@@ -12,6 +12,7 @@ function message(text, login = false) {
 function clearSession() {
   state.generation++; state.token = null; state.user = null; state.workspaces = []; sessionStorage.removeItem('mintspace-token');
   $('#account-name').textContent = 'Đăng nhập'; $('#avatar').textContent = 'O';
+  $('#avatar').hidden = true; $('#account-chevron').hidden = true; $('#register-button').hidden = false;
   $('#workspace-dialog').close(); $('#account-dialog').close(); $('#members-dialog').close(); render();
   message('Đăng nhập để xem workspace của bạn và bắt đầu cộng tác.', true);
 }
@@ -37,6 +38,7 @@ async function load() {
     while (true) { const rows = await api(`/workspaces?limit=100&page=${page++}`); items.push(...rows); if (rows.length < 100) break; }
     if (generation !== state.generation) return;
     state.user = user; state.workspaces = items;
+    $('#avatar').hidden = false; $('#account-chevron').hidden = false; $('#register-button').hidden = true;
     $('#account-name').textContent = user.full_name; $('#avatar').textContent = user.full_name.trim().charAt(0).toUpperCase(); render();
   } catch (error) { if (generation === state.generation) { state.workspaces = []; render(); message(error.message); } }
 }
@@ -148,5 +150,39 @@ $('#auth-form').addEventListener('submit', async event => {
     state.token = auth.access_token; sessionStorage.setItem('mintspace-token', state.token); event.target.reset(); $('#auth-dialog').close(); await load();
   } catch (error) { $('#auth-error').textContent = error.message; $('#auth-error').hidden = false; }
   finally { $('#login-button').disabled = false; $('#login-button').textContent = 'Đăng nhập'; }
+});
+let registering = false;
+function openRegister() {
+  $('#auth-dialog').close(); $('#register-form').reset();
+  $('#register-error').hidden = true; $('#register-success').hidden = true;
+  $('#register-fields').hidden = false; $('#register-submit').hidden = false;
+  $('#register-dialog').showModal();
+}
+$('#register-button').onclick = $('#auth-register-button').onclick = openRegister;
+$('#close-register').onclick = () => { if (!registering) $('#register-dialog').close(); };
+$('#register-dialog').addEventListener('cancel', event => { if (registering) event.preventDefault(); });
+$('#register-login-button').onclick = () => { $('#register-dialog').close(); $('#auth-dialog').showModal(); };
+$('#register-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (registering) return;
+  const fields = event.target.elements;
+  const full_name = fields.full_name.value.trim(), email = fields.email.value.trim(), password = fields.password.value;
+  $('#register-error').hidden = true;
+  function showError(text) { $('#register-error').textContent = text; $('#register-error').hidden = false; }
+  if (!full_name) { showError('Vui lòng nhập họ và tên.'); fields.full_name.focus(); return; }
+  if (password.length < 8 || new TextEncoder().encode(password).length > 72) { showError('Mật khẩu cần ít nhất 8 ký tự và không quá 72 byte UTF-8.'); fields.password.focus(); return; }
+  if (password !== fields.confirm_password.value) { showError('Mật khẩu nhập lại chưa khớp.'); fields.confirm_password.focus(); return; }
+  registering = true; $('#register-fields').disabled = true;
+  $('#register-submit').disabled = true; $('#register-submit').textContent = 'Đang đăng ký…';
+  $('#close-register').disabled = true; $('#register-login-button').disabled = true;
+  try {
+    const result = await api('/auth/register', { method: 'POST', body: JSON.stringify({ full_name, email, password }) });
+    event.target.reset(); $('#register-fields').hidden = true; $('#register-submit').hidden = true;
+    $('#register-success').textContent = result.message || 'Đăng ký thành công. Kiểm tra email và mở liên kết xác minh trước khi đăng nhập.';
+    $('#register-success').hidden = false; $('#auth-form').elements.email.value = email;
+  } catch (error) { showError(error.message); }
+  finally {
+    registering = false; $('#register-fields').disabled = false; $('#register-submit').disabled = false;
+    $('#register-submit').textContent = 'Đăng ký'; $('#close-register').disabled = false; $('#register-login-button').disabled = false;
+  }
 });
 load();
