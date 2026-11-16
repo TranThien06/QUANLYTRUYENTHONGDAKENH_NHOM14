@@ -377,6 +377,12 @@ def test_cancel_schedule_and_due_scan_idempotency(scenario):
     assert publish_one()
     with transaction() as db:
         assert len(db.all("SELECT * FROM publish_jobs WHERE variant_id=%s", (variant,))) == 1
+    [attempt] = s.api("GET", s.base + f"/variants/{variant}/jobs", token=s.owner["token"])
+    assert str(attempt["social_account_id"]) == str(s.channel_id)
+    assert attempt["platform"] and attempt["account_name"]
+    assert attempt["created_at"] and attempt["started_at"] and attempt["finished_at"]
+    assert attempt["status"] == "success"
+    assert attempt["response_payload"]["external_post_id"] == demo_id(variant)
 
 
 def test_retry_backoff_and_limit(scenario):
@@ -400,6 +406,10 @@ def test_retry_backoff_and_limit(scenario):
     with transaction() as db:
         rows = db.all("SELECT * FROM publish_jobs WHERE variant_id=%s", (variant,))
     assert len(rows) == 4 and all(j["status"] == "failed" for j in rows)
+    attempts = s.api("GET", s.base + f"/variants/{variant}/jobs", token=s.owner["token"])
+    assert [attempt["attempt_no"] for attempt in attempts] == [4, 3, 2, 1]
+    assert len({attempt["job_id"] for attempt in attempts}) == 4
+    assert all(attempt["status"] == "failed" and attempt["error_code"] for attempt in attempts)
 
 
 def test_unknown_send_and_crashed_worker_require_reconciliation(scenario):
@@ -433,6 +443,8 @@ def test_unknown_send_and_crashed_worker_require_reconciliation(scenario):
         s.owner["token"],
     )
     assert s.api("GET", s.base + f"/posts/{post['post_id']}", token=s.owner["token"])["status"] == "published"
+    [attempt] = s.api("GET", s.base + f"/variants/{variant}/jobs", token=s.owner["token"])
+    assert attempt["response_payload"]["before_reconciliation"]["error_code"] == "WORKER_INTERRUPTED"
 
 
 def test_post_idempotency_and_cross_workspace_media(scenario):

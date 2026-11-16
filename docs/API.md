@@ -148,7 +148,7 @@ Khi tạo bài, gửi header `Idempotency-Key` (UUID hoặc chuỗi chữ/số/_
 | POST W/variants/{id}/schedules                       | Lên lịch với scheduled_at có timezone                                   |
 | PATCH W/variants/{id}/schedules/{scheduleId}         | Đổi scheduled_at hoặc cancel=true                                       |
 | GET W/calendar                                       | from/to có timezone; kênh/trạng thái/phân trang                         |
-| GET W/variants/{id}/jobs                             | Lịch sử thử đăng, mã lỗi và cờ cần đối soát                             |
+| GET W/variants/{id}/jobs                             | Lịch sử thử đăng theo lần mới nhất, gồm thời gian, kênh, trạng thái, kết quả và lỗi |
 | POST W/variants/{id}/retry                           | Retry thủ công variant failed; cần post.publish                         |
 | POST W/variants/{id}/reconcile                       | Xác minh external_post_id thuộc tài khoản để ghi nhận job mơ hồ đã đăng |
 

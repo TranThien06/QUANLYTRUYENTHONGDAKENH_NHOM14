@@ -138,7 +138,7 @@ def claim_one():
             return None
         claim = str(uuid.uuid4())
         db.execute(
-            "UPDATE publish_jobs SET status='running',claim_token=%s,lease_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 120 SECOND),started_at=UTC_TIMESTAMP() WHERE job_id=%s",
+            "UPDATE publish_jobs SET status='running',claim_token=%s,lease_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 120 SECOND),started_at=COALESCE(started_at,UTC_TIMESTAMP()) WHERE job_id=%s",
             (claim, job["job_id"]),
         )
         return job, post, variant, claim
@@ -193,8 +193,15 @@ def publish_one():
             return True
         if result:
             db.execute(
-                "UPDATE publish_jobs SET status='success',finished_at=UTC_TIMESTAMP(),lease_expires_at=NULL,error_code=NULL WHERE job_id=%s",
-                (job["job_id"],),
+                "UPDATE publish_jobs SET status='success',finished_at=UTC_TIMESTAMP(),lease_expires_at=NULL,error_code=NULL,response_payload=%s WHERE job_id=%s",
+                (
+                    json_value({
+                        **(active["response_payload"] or {}),
+                        "external_post_id": result["external_post_id"],
+                        "external_post_url": result.get("external_post_url"),
+                    }),
+                    job["job_id"],
+                ),
             )
             db.execute(
                 "UPDATE post_variants SET status='published',external_post_id=%s,external_post_url=%s,published_at=UTC_TIMESTAMP() WHERE variant_id=%s",
