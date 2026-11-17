@@ -49,9 +49,10 @@ class Scenario:
             mail = db.one(
                 "SELECT * FROM email_outbox WHERE recipient=%s ORDER BY email_id DESC LIMIT 1", (email,)
             )
-        raw = parse_qs(urlparse(decrypt(mail["body_enc"])).query)["token"][0]
-        self.api("POST", "/auth/verify-email", {"token": raw})
-        self.api("POST", "/auth/verify-email", {"token": raw}, status=422)
+        raw = decrypt(mail["body_enc"])
+        verification = {"email": email, "code": raw}
+        self.api("POST", "/auth/verify-email", verification)
+        self.api("POST", "/auth/verify-email", verification, status=422)
         result = self.api("POST", "/auth/login", {"email": email, "password": password})
         return {
             "email": email,

@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import secrets
 from datetime import timedelta
 from typing import Annotated
 from fastapi import APIRouter, Depends, Request
@@ -8,7 +11,7 @@ from app.db import transaction
 from app.dependencies import current_user
 from app.errors import check
 from app.events import audit
-from app.security import token, hash_token, hash_password, verify_password, encrypt
+from app.security import token, hash_token, hash_password, verify_password, encrypt, encryption_key
 
 router = APIRouter(tags=["Tài khoản"])
 
@@ -29,6 +32,10 @@ class EmailInput(Input):
     @classmethod
     def normalize(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+
+class VerificationInput(EmailInput):
+    code: str = Field(pattern=r"^[0-9]{6}$")
 
 
 class RegisterInput(EmailInput):
@@ -85,6 +92,28 @@ def action_token(db, user, purpose, hours):
     queue_mail(db, user["email"], purpose, f"{settings.frontend_url}/{route}?token={raw}")
 
 
+def verification_hash(user_id, code):
+    return hmac.new(encryption_key(), f"verify:{user_id}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def send_verification_code(db, user):
+    previous = db.one("SELECT * FROM email_verification_codes WHERE user_id=%s", (user["user_id"],))
+    if previous and previous["sent_at"] > now() - timedelta(seconds=60):
+        return
+    code = f"{secrets.randbelow(1000000):06d}"
+    db.execute(
+        """INSERT INTO email_verification_codes(user_id,code_hash,expires_at,sent_at)
+        VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE code_hash=VALUES(code_hash),
+        expires_at=VALUES(expires_at),sent_at=VALUES(sent_at),failed_attempts=0,consumed_at=NULL""",
+        (user["user_id"], verification_hash(user["user_id"], code), now() + timedelta(minutes=10), now()),
+    )
+    db.execute(
+        "UPDATE auth_action_tokens SET consumed_at=UTC_TIMESTAMP() WHERE user_id=%s AND purpose='verify_email' AND consumed_at IS NULL",
+        (user["user_id"],),
+    )
+    queue_mail(db, user["email"], "verify_email_code", code)
+
+
 @router.post("/auth/register", status_code=201)
 def register(data: RegisterInput):
     hashed = hash_password(data.password)
@@ -98,8 +127,8 @@ def register(data: RegisterInput):
         user_id = db.insert(
             "users", {"email": str(data.email), "password_hash": hashed, "full_name": data.full_name.strip()}
         )
-        action_token(db, {"user_id": user_id, "email": str(data.email)}, "verify_email", 24)
-    return ok({"message": "Đăng ký thành công. Kiểm tra email để xác minh."})
+        send_verification_code(db, {"user_id": user_id, "email": str(data.email)})
+    return ok({"message": "Đăng ký thành công. Nhập mã 6 chữ số đã gửi qua email để xác minh."})
 
 
 @router.post("/auth/resend-verification")
@@ -107,7 +136,7 @@ def resend(data: EmailInput):
     with transaction() as db:
         user = db.one("SELECT * FROM users WHERE email=%s FOR UPDATE", (str(data.email),))
         if user and user["status"] == "pending":
-            action_token(db, user, "verify_email", 24)
+            send_verification_code(db, user)
     return ok({"message": "Nếu tài khoản phù hợp, email sẽ được gửi."})
 
 
@@ -147,8 +176,45 @@ def consume(data, purpose):
 
 
 @router.post("/auth/verify-email")
-def verify_email(data: TokenInput):
-    return consume(data, "verify_email")
+def verify_email(data: VerificationInput | TokenInput):
+    if isinstance(data, TokenInput):
+        return consume(data, "verify_email")  # Support emails already sent before the code rollout.
+    valid = False
+    with transaction() as db:
+        user = db.one("SELECT * FROM users WHERE email=%s FOR UPDATE", (str(data.email),))
+        if user and user["status"] == "pending":
+            item = db.one(
+                "SELECT * FROM email_verification_codes WHERE user_id=%s FOR UPDATE", (user["user_id"],)
+            )
+            if (
+                item
+                and not item["consumed_at"]
+                and item["expires_at"] > now()
+                and item["failed_attempts"] < 5
+            ):
+                valid = hmac.compare_digest(item["code_hash"], verification_hash(user["user_id"], data.code))
+                if valid:
+                    db.execute(
+                        "UPDATE users SET status='active',email_verified_at=UTC_TIMESTAMP() WHERE user_id=%s",
+                        (user["user_id"],),
+                    )
+                    db.execute(
+                        "UPDATE email_verification_codes SET consumed_at=UTC_TIMESTAMP() WHERE user_id=%s",
+                        (user["user_id"],),
+                    )
+                else:
+                    db.execute(
+                        "UPDATE email_verification_codes SET failed_attempts=failed_attempts+1 WHERE user_id=%s",
+                        (user["user_id"],),
+                    )
+    # Commit failed-attempt counters before returning an error.
+    check(
+        valid,
+        422,
+        "INVALID_CODE",
+        "Mã không đúng, đã hết hạn hoặc nhập sai quá 5 lần. Vui lòng yêu cầu mã mới.",
+    )
+    return ok({"message": "Email đã được xác minh. Bạn có thể đăng nhập."})
 
 
 @router.post("/auth/forgot-password")
