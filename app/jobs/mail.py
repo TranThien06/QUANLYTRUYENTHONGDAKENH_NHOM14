@@ -68,7 +68,15 @@ def send_one_email():
                 ("Message-ID", message["messageId"]),
             ):
                 email[key] = value
-            if item["subject"] == "verify_email":
+            if item["subject"] == "verify_email_code":
+                email.replace_header("Subject", "Mã xác minh email Orbitspace")
+                email.set_content(
+                    "Mã xác minh tài khoản Orbitspace của bạn: "
+                    + message["text"]
+                    + "\n\nNhập mã này trên website để xác minh email. Mã có hiệu lực 10 phút, chỉ dùng một lần."
+                    "\nKhông chia sẻ mã này. Nếu bạn không đăng ký tài khoản, hãy bỏ qua email này.\n"
+                )
+            elif item["subject"] == "verify_email":
                 email.replace_header("Subject", "Xác minh email tài khoản Orbitspace")
                 email.set_content(
                     "Chào bạn,\n\n"

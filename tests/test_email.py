@@ -8,7 +8,7 @@ from app.security import encrypt
 
 
 @pytest.mark.parametrize("port", ["587", "465"])
-def test_verification_email_uses_tls_and_original_one_use_link(monkeypatch, port):
+def test_verification_email_uses_tls_and_one_use_code(monkeypatch, port):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setenv("SMTP_PORT", port)
@@ -16,12 +16,12 @@ def test_verification_email_uses_tls_and_original_one_use_link(monkeypatch, port
     monkeypatch.setenv("SMTP_PASSWORD", "test-app-password")
     monkeypatch.setenv("MAIL_FROM", "sender@example.com")
     monkeypatch.setattr(settings, "mail_mode", "smtp")
-    link = "http://localhost:3000/verify-email?token=one-use-token"
+    link = "012345"
     db = MagicMock()
     db.one.return_value = {
         "email_id": 1,
         "recipient": "recipient@example.com",
-        "subject": "verify_email",
+        "subject": "verify_email_code",
         "body_enc": encrypt(link),
         "attempt_count": 0,
     }
@@ -46,8 +46,8 @@ def test_verification_email_uses_tls_and_original_one_use_link(monkeypatch, port
     message = smtp.send_message.call_args.args[0]
     assert message["To"] == "recipient@example.com"
     assert link in message.get_content()
-    assert "24" in message.get_content()
-    assert "Xác minh email" in message["Subject"]
+    assert "10" in message.get_content()
+    assert "Mã xác minh email" in message["Subject"]
     assert any("status='sent'" in call.args[0] for call in db.execute.call_args_list)
 
 

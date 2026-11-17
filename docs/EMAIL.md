@@ -1,6 +1,10 @@
 # Email xác minh qua Gmail
 
-Web đã có trang `/verify-email`: mở liên kết trong email để xác minh, sau đó chọn Đăng nhập. Trong hộp thoại Đăng nhập, chọn **Gửi lại xác minh** nếu chưa nhận được thư hoặc liên kết hết hạn. Gửi lại vô hiệu hóa liên kết trước; liên kết mới dùng một lần trong 24 giờ.
+Sau khi đăng ký, web mở biểu mẫu xác minh. Người dùng nhận **mã 6 chữ số** qua email và nhập cùng email đã đăng ký. Mã có hiệu lực **10 phút**, dùng một lần; nhập sai **5 lần** phải gửi lại mã. Mã được lưu dưới dạng HMAC gắn với tài khoản, không lưu rõ trong bảng xác minh. Chờ ít nhất **60 giây** giữa hai lần gửi; mã mới vô hiệu mã cũ.
+
+Tài khoản cũ chưa xác minh: Đăng nhập → Xác minh email → nhập email → Gửi lại mã. Các liên kết đã gửi trước khi đổi sang mã vẫn được hỗ trợ cho tới khi hết hạn hoặc gửi lại mã.
+
+Chạy `.\.venv\Scripts\python.exe -m scripts.migrate` để thêm bảng `email_verification_codes` trước khi khởi động lại API/worker.
 
 ## Cấu hình trên máy
 
@@ -32,7 +36,7 @@ FRONTEND_URL phải là địa chỉ người nhận mở được. localhost ch
 .\.venv\Scripts\python.exe -m app.worker
 ```
 
-5. Với tài khoản đã đăng ký: Đăng nhập → Gửi lại xác minh → nhập email → kiểm tra Inbox/Spam → mở liên kết mới → Đăng nhập. Email đã ghi vào file trước khi bật SMTP không được gửi lại tự động; hãy dùng Gửi lại xác minh.
+5. Với tài khoản đã đăng ký: Đăng nhập → Xác minh email → nhập email → Gửi lại mã → kiểm tra Inbox/Spam → nhập mã → Đăng nhập. Email đã ghi vào file trước khi bật SMTP không được gửi lại tự động; hãy dùng Gửi lại xác minh.
 
 Worker gửi email từ email_outbox; thất bại được thử lại tối đa 4 lần. Nếu Gmail từ chối, kiểm tra Mật khẩu ứng dụng, xác minh hai bước và quyền tài khoản. Không cần cấu hình Facebook/TikTok live để gửi Gmail trong môi trường development.
 

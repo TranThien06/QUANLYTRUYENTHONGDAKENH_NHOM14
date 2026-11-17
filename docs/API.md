@@ -15,12 +15,12 @@ Content-Type: application/json
 {"email":"thien@example.com","password":"Password123!","full_name":"Thiện"}
 ```
 
-Chạy worker để gửi email. Khi `MAIL_MODE=file`, email demo được lưu tại `storage/mail/*.json`, bao gồm liên kết xác minh. Lấy query `token` từ link rồi gửi:
+Chạy worker để gửi email chứa mã xác minh 6 chữ số. Với `MAIL_MODE=smtp`, mã gửi vào hộp thư thật; với `MAIL_MODE=file`, mã nằm trong trường `text` của `storage/mail/*.json`. Mã hết hạn sau 10 phút, dùng một lần; nhập sai 5 lần cần yêu cầu mã mới. `POST /auth/resend-verification` nhận email, cách nhau ít nhất 60 giây; mã mới vô hiệu mã cũ. Gửi mã kèm email:
 
 ```http
 POST /auth/verify-email
 
-{"token":"TOKEN_TRONG_EMAIL"}
+{"email":"thien@example.com","code":"012345"}
 ```
 
 ```http
@@ -61,7 +61,7 @@ Lấy workspace_id trả về làm `W=/workspaces/{workspaceId}`. Tất cả ID 
 | POST /invitations/accept                               | Người nhận đã xác minh, email khớp             |
 | GET W/settings; PATCH W/settings                       | Xem: thành viên; sửa: workspace.manage         |
 
-Mời: `{"email":"dung@example.com","role":"editor"}`. Nhận: `{"token":"TOKEN_TRONG_EMAIL"}`. Vai trò gồm admin, manager, editor, approver, viewer. Owner luôn là Admin active; phải chuyển owner trước khi hạ/xóa/tạm ngưng. Tạo workspace mặc định `require_approval=false`, `allow_self_approval=false`.
+Mời: `{"email":"dung@example.com","role":"editor"}`. Nhận: `{"email":"thien@example.com","code":"012345"}`. Vai trò gồm admin, manager, editor, approver, viewer. Owner luôn là Admin active; phải chuyển owner trước khi hạ/xóa/tạm ngưng. Tạo workspace mặc định `require_approval=false`, `allow_self_approval=false`.
 
 ## 3. Kết nối kênh qua OAuth
 

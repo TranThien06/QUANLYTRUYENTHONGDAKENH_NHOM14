@@ -155,12 +155,16 @@ let registering = false;
 function openRegister() {
   $('#auth-dialog').close(); $('#register-form').reset();
   $('#register-error').hidden = true; $('#register-success').hidden = true;
-  $('#register-fields').hidden = false; $('#register-submit').hidden = false;
+  $('#register-fields').hidden = false; $('#register-submit').hidden = false; $('#register-verify-button').hidden = true;
   $('#register-dialog').showModal();
 }
 $('#register-button').onclick = $('#auth-register-button').onclick = openRegister;
 $('#close-register').onclick = () => { if (!registering) $('#register-dialog').close(); };
 $('#register-dialog').addEventListener('cancel', event => { if (registering) event.preventDefault(); });
+$('#register-verify-button').onclick = () => {
+  if (typeof window.openEmailVerification === 'function') window.openEmailVerification($('#auth-form').elements.email.value);
+  else window.location.assign('/verify-email');
+};
 $('#register-login-button').onclick = () => { $('#register-dialog').close(); $('#auth-dialog').showModal(); };
 $('#register-form').addEventListener('submit', async event => {
   event.preventDefault(); if (registering) return;
@@ -177,8 +181,10 @@ $('#register-form').addEventListener('submit', async event => {
   try {
     const result = await api('/auth/register', { method: 'POST', body: JSON.stringify({ full_name, email, password }) });
     event.target.reset(); $('#register-fields').hidden = true; $('#register-submit').hidden = true;
-    $('#register-success').textContent = result.message || 'Đăng ký thành công. Kiểm tra email và mở liên kết xác minh trước khi đăng nhập.';
+    $('#register-success').textContent = result.message || 'Đăng ký thành công. Nhập mã 6 chữ số đã gửi qua email để xác minh.';
     $('#register-success').hidden = false; $('#auth-form').elements.email.value = email;
+    $('#register-verify-button').hidden = false;
+    if (typeof window.openEmailVerification === 'function') window.openEmailVerification(email);
   } catch (error) { showError(error.message); }
   finally {
     registering = false; $('#register-fields').disabled = false; $('#register-submit').disabled = false;

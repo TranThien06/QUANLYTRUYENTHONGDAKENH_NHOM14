@@ -75,6 +75,7 @@ def migrate():
                 versions = [
                     ("001_initial", ROOT / "tai-lieu-da-dong-bo" / "Khoi_tao_co_so_du_lieu_MySQL.sql"),
                     ("002_runtime", ROOT / "database" / "002_runtime.sql"),
+                    ("003_email_codes", ROOT / "database" / "003_email_codes.sql"),
                 ]
                 for version, path in versions:
                     cursor.execute("SELECT 1 FROM schema_migrations WHERE version=%s", (version,))
