@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, Query
 from typing import Literal
 from pydantic import Field
 from app.common import Input, Id, Pagination, now, utc, ok
-from app.db import transaction
+from app.db import json_value, transaction
 from app.dependencies import workspace
 from app.errors import check
 from app.events import audit, change_status
@@ -195,7 +195,16 @@ def jobs(workspace_id: Id, variant_id: Id, paging: Pagination = Depends()):
         )
         return ok(
             db.all(
-                "SELECT job_id,attempt_no,status,started_at,finished_at,next_retry_at,error_code,error_message,needs_reconciliation FROM publish_jobs WHERE variant_id=%s ORDER BY attempt_no DESC LIMIT %s OFFSET %s",
+                """SELECT j.job_id,j.attempt_no,j.status,j.created_at,j.started_at,j.finished_at,
+                          j.next_retry_at,j.error_code,j.error_message,j.needs_reconciliation,
+                          v.social_account_id,a.account_name,p.code AS platform,j.response_payload,
+                          CASE WHEN j.status='success' THEN v.external_post_id END AS external_post_id,
+                          CASE WHEN j.status='success' THEN v.external_post_url END AS external_post_url
+                   FROM publish_jobs j
+                   JOIN post_variants v ON v.variant_id=j.variant_id
+                   JOIN social_accounts a ON a.social_account_id=v.social_account_id
+                   JOIN platforms p ON p.platform_id=a.platform_id
+                   WHERE j.variant_id=%s ORDER BY j.attempt_no DESC LIMIT %s OFFSET %s""",
                 (variant_id, *paging.sql),
             )
         )
@@ -238,8 +247,25 @@ def reconcile(workspace_id: Id, variant_id: Id, data: ReconcileInput, request: R
             a, variant, data.external_post_id, credentials(db, a["social_account_id"])["access_token"]
         )
         db.execute(
-            "UPDATE publish_jobs SET status='success',needs_reconciliation=0,error_code=NULL,error_message=NULL,finished_at=UTC_TIMESTAMP() WHERE job_id=%s",
-            (job["job_id"],),
+            """UPDATE publish_jobs SET status='success',needs_reconciliation=0,
+               error_code=NULL,error_message=NULL,finished_at=UTC_TIMESTAMP(),response_payload=%s
+               WHERE job_id=%s""",
+            (
+                json_value(
+                    {
+                        **(job["response_payload"] or {}),
+                        "external_post_id": data.external_post_id,
+                        "external_post_url": verified.get("url"),
+                        "before_reconciliation": {
+                            "status": job["status"],
+                            "error_code": job["error_code"],
+                            "error_message": job["error_message"],
+                            "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
+                        },
+                    }
+                ),
+                job["job_id"],
+            ),
         )
         db.execute(
             "UPDATE post_variants SET status='published',external_post_id=%s,external_post_url=%s,published_at=%s WHERE variant_id=%s",
