@@ -251,17 +251,19 @@ def reconcile(workspace_id: Id, variant_id: Id, data: ReconcileInput, request: R
                error_code=NULL,error_message=NULL,finished_at=UTC_TIMESTAMP(),response_payload=%s
                WHERE job_id=%s""",
             (
-                json_value({
-                    **(job["response_payload"] or {}),
-                    "external_post_id": data.external_post_id,
-                    "external_post_url": verified.get("url"),
-                    "before_reconciliation": {
-                        "status": job["status"],
-                        "error_code": job["error_code"],
-                        "error_message": job["error_message"],
-                        "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
-                    },
-                }),
+                json_value(
+                    {
+                        **(job["response_payload"] or {}),
+                        "external_post_id": data.external_post_id,
+                        "external_post_url": verified.get("url"),
+                        "before_reconciliation": {
+                            "status": job["status"],
+                            "error_code": job["error_code"],
+                            "error_message": job["error_message"],
+                            "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
+                        },
+                    }
+                ),
                 job["job_id"],
             ),
         )

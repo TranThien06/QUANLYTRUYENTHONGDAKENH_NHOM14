@@ -195,11 +195,13 @@ def publish_one():
             db.execute(
                 "UPDATE publish_jobs SET status='success',finished_at=UTC_TIMESTAMP(),lease_expires_at=NULL,error_code=NULL,response_payload=%s WHERE job_id=%s",
                 (
-                    json_value({
-                        **(active["response_payload"] or {}),
-                        "external_post_id": result["external_post_id"],
-                        "external_post_url": result.get("external_post_url"),
-                    }),
+                    json_value(
+                        {
+                            **(active["response_payload"] or {}),
+                            "external_post_id": result["external_post_id"],
+                            "external_post_url": result.get("external_post_url"),
+                        }
+                    ),
                     job["job_id"],
                 ),
             )
