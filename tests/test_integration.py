@@ -171,6 +171,37 @@ def reset_approval_policy(scenario):
     scenario.settings(require_approval=False, allow_self_approval=False)
 
 
+def test_disconnect_channel_is_authorized_and_workspace_scoped(scenario):
+    s = scenario
+    other = Scenario(s.client)
+    other.owner = s.owner
+    workspace = s.api(
+        "POST",
+        "/workspaces",
+        {"name": "Other workspace", "slug": f"team-{uuid.uuid4()}"},
+        s.owner["token"],
+        201,
+    )
+    other.base = f"/workspaces/{workspace['workspace_id']}"
+    other_channel_id = other.connect()
+    path = s.base + f"/social-accounts/{s.channel_id}/disconnect"
+
+    s.api("POST", path, token=s.editor["token"], status=403)
+    s.api("POST", other.base + f"/social-accounts/{s.channel_id}/disconnect", token=s.owner["token"], status=404)
+    for _ in range(2):
+        assert s.api("POST", path, token=s.owner["token"]) == {"status": "disconnected"}
+    s.api("POST", s.base + f"/social-accounts/{s.channel_id}/sync/metrics", token=s.owner["token"], status=409)
+
+    with transaction() as db:
+        channel = db.one("SELECT * FROM social_accounts WHERE social_account_id=%s", (s.channel_id,))
+        assert channel["status"] == "disconnected"
+        assert channel["disconnected_at"] is not None
+        assert db.one("SELECT 1 FROM social_account_tokens WHERE social_account_id=%s", (s.channel_id,)) is None
+        other_channel = db.one("SELECT status FROM social_accounts WHERE social_account_id=%s", (other_channel_id,))
+        assert other_channel["status"] == "connected"
+        assert db.one("SELECT 1 FROM social_account_tokens WHERE social_account_id=%s", (other_channel_id,))
+
+
 def test_login_logout_lock_and_profile(scenario):
     s = scenario
     profile = s.api("GET", "/me", token=s.owner["token"])
@@ -341,6 +372,38 @@ def test_concurrent_publish_requests_and_workers_do_not_duplicate(scenario):
     assert len(jobs) == 1 and jobs[0]["status"] == "success"
 
 
+def test_publish_selected_channels_keeps_independent_results(scenario):
+    s = scenario
+    instagram = s.connect("instagram")
+    tiktok = s.connect("tiktok")
+    token = s.owner["token"]
+    post = s.api(
+        "POST", s.base + "/posts",
+        {
+            "base_caption": "Bài chỉ có văn bản",
+            "variants": [{"social_account_id": channel} for channel in (s.channel_id, instagram, tiktok)],
+        },
+        token, 201,
+    )
+    facebook, instagram, unselected = [v["variant_id"] for v in post["variants"]]
+    path = s.base + f"/posts/{post['post_id']}"
+    response = s.api("POST", path + "/publish", {"variant_ids": [facebook, instagram]}, token, 202)
+    assert [(r["variant_id"], r["status"]) for r in response["results"]] == [
+        (facebook, "publishing"), (instagram, "failed"),
+    ]
+    assert len(response["jobs"]) == 1
+    assert publish_one()
+    detail = s.api("GET", path, token=token)
+    assert [v["status"] for v in detail["variants"]] == ["published", "failed", "draft"]
+    assert detail["variants"][1]["error_code"] == "MEDIA_REQUIRED"
+    assert detail["status"] == "partially_failed"
+    [success] = s.api("GET", s.base + f"/variants/{facebook}/jobs", token=token)
+    [failure] = s.api("GET", s.base + f"/variants/{instagram}/jobs", token=token)
+    assert success["status"] == "success" and success["external_post_id"]
+    assert failure["status"] == "failed" and failure["error_code"] == "MEDIA_REQUIRED"
+    assert s.api("GET", s.base + f"/variants/{unselected}/jobs", token=token) == []
+
+
 def test_cancel_schedule_and_due_scan_idempotency(scenario):
     s = scenario
     post = s.post()
@@ -383,6 +446,37 @@ def test_cancel_schedule_and_due_scan_idempotency(scenario):
     assert attempt["created_at"] and attempt["started_at"] and attempt["finished_at"]
     assert attempt["status"] == "success"
     assert attempt["response_payload"]["external_post_id"] == demo_id(variant)
+
+
+def test_publish_results_belong_to_each_channel_variant(scenario):
+    s = scenario
+    instagram = s.connect("instagram")
+    path = s.base + "/posts"
+    token = s.owner["token"]
+    post = s.api(
+        "POST", path,
+        {
+            "title": "Hai kênh",
+            "base_caption": "Xin chào",
+            "media_ids": [s.media_id],
+            "variants": [{"social_account_id": s.channel_id}, {"social_account_id": instagram}],
+        },
+        token, 201,
+    )
+    s.send(post)
+    assert publish_one()
+    assert publish_one()
+    saved = s.api("GET", path + f"/{post['post_id']}", token=token)["variants"]
+    assert {v["platform"] for v in saved} == {"facebook", "instagram"}
+    for variant in saved:
+        variant_id = variant["variant_id"]
+        external_id = demo_id(variant_id)
+        url = f"https://example.com/demo/{variant['platform']}/{external_id}"
+        assert variant["external_post_id"] == external_id
+        assert variant["external_post_url"] == url
+        [attempt] = s.api("GET", s.base + f"/variants/{variant_id}/jobs", token=token)
+        assert attempt["external_post_id"] == external_id
+        assert attempt["external_post_url"] == url
 
 
 def test_retry_backoff_and_limit(scenario):

@@ -144,7 +144,7 @@ Khi tạo bài, gửi header `Idempotency-Key` (UUID hoặc chuỗi chữ/số/_
 | POST W/posts/{id}/approvals/withdraw                 | Rút duyệt về draft                                                      |
 | GET/POST W/posts/{id}/comments                       | Bình luận nội bộ; POST có content/parent_comment_id                     |
 | DELETE W/posts/{id}/comments/{commentId}             | Tác giả hoặc Admin xóa mềm                                              |
-| POST W/posts/{id}/publish                            | Đăng các variant chưa thành công; cần post.publish                      |
+| POST W/posts/{id}/publish                            | Đăng ngay các variant được chọn; cần post.publish                       |
 | POST W/variants/{id}/schedules                       | Lên lịch với scheduled_at có timezone                                   |
 | PATCH W/variants/{id}/schedules/{scheduleId}         | Đổi scheduled_at hoặc cancel=true                                       |
 | GET W/calendar                                       | from/to có timezone; kênh/trạng thái/phân trang                         |
@@ -154,7 +154,7 @@ Khi tạo bài, gửi header `Idempotency-Key` (UUID hoặc chuỗi chữ/số/_
 
 Worker lưu từng lần thử, tự retry lỗi tạm tối đa 3 lần sau lần đầu, chờ 60/120/240 giây hoặc lâu hơn theo rate limit. Không retry khi không biết nền tảng đã nhận bài hay chưa; job có needs_reconciliation=1. Xem quy trình đối soát trong PHAM_VI.md. Job từ lịch chỉ được tạo khi tới giờ. Hủy lịch trả 409 nếu worker đã bắt đầu gửi.
 
-Đăng ngay trả 202 kèm jobs; poll GET chi tiết bài hoặc GET jobs. `published` chỉ khi mọi kênh thành công; một phần thành công là `partially_failed`. Trong mock, dùng platform_options.mock_failure bằng temporary/ambiguous để thử lỗi, chỉ sử dụng trên môi trường dev/test.
+Gửi `{"variant_ids":["12","13"]}` để đăng ngay trên các kênh được chọn. Nếu bỏ qua danh sách, API xét mọi kênh của bài. API trả HTTP 202 kèm `jobs` cho các yêu cầu được đưa vào hàng đợi và `results` chứa trạng thái của từng kênh. Nếu nội dung hoặc kết nối không hợp lệ, lịch sử job của kênh lưu mã và thông báo lỗi. Có thể xem kết quả cuối qua GET chi tiết bài hoặc GET jobs. Trạng thái tổng hợp `published` yêu cầu mọi kênh của bài đã đăng thành công. Khi chỉ một số kênh đã đăng, bài hiển thị `partially_failed` sau khi không còn kênh đang đăng hoặc lên lịch. Trong môi trường dev/test, có thể dùng `platform_options.mock_failure` với giá trị `temporary` hoặc `ambiguous` để thử lỗi.
 
 ## 6. Báo cáo, hộp thư, thông báo và quản trị
 

@@ -28,6 +28,8 @@ def maintenance():
 
 
 def tick(sync=True):
+    if sync:
+        refresh_tokens()
     recover_expired_jobs()
     queue_due_schedules()
     for _ in range(20):
@@ -42,7 +44,6 @@ def tick(sync=True):
             break
     if sync:
         maintenance()
-        refresh_tokens()
         sync_accounts()
         sync_post_snapshots()
 

@@ -8,7 +8,7 @@ from app.dependencies import membership
 from app.errors import check
 from app.events import change_status, notify
 from app.modules.posts import load_post
-from app.modules.channels import credentials
+from app.modules.channels import account, credentials
 from app.publishing import validate_publish, enqueue, aggregate
 from app.social import publish_remote, ProviderError
 
@@ -161,16 +161,27 @@ def publish_one():
 
     try:
         with transaction() as db:
+            channel = account(db, post["workspace_id"], variant["social_account_id"], lock=True)
+            check(channel["status"] == "connected", 409, "CHANNEL_UNAVAILABLE", "Kênh chưa kết nối")
+            check(
+                db.one(
+                    "SELECT 1 FROM publish_jobs WHERE job_id=%s AND claim_token=%s AND status='running'",
+                    (job["job_id"], claim),
+                ),
+                409,
+                "CLAIM_LOST",
+                "Worker đã mất quyền xử lý",
+            )
             membership(db, post["workspace_id"], job["requested_by"], "post.publish")
             payload = validate_publish(db, post, variant)
             auth = credentials(db, variant["social_account_id"])
-        result = publish_remote(
-            **payload,
-            variant=variant,
-            access_token=auth["access_token"],
-            progress=job["response_payload"] or {},
-            save_progress=save_progress,
-        )
+            result = publish_remote(
+                **payload,
+                variant=variant,
+                access_token=auth["access_token"],
+                progress=job["response_payload"] or {},
+                save_progress=save_progress,
+            )
     except Exception as cause:
         error = cause
     if result and not result.get("pending") and not result.get("external_post_id"):

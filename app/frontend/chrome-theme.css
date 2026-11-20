@@ -15,6 +15,12 @@ dialog{background:#fffaff;border-color:#d7cddd;color:#242328;border-radius:10px;
 
 /* Workspace membership management */
 #members-dialog{width:min(1000px,calc(100% - 30px))}
+.publish-channel{padding:12px 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+#publish-dialog .publish-channel label{display:flex;align-items:center;gap:8px;margin:0}
+#publish-dialog .publish-channel input{display:inline-block;width:auto;margin:0;accent-color:var(--purple);outline:revert}
+#create-post-form textarea{display:block;width:100%;margin-top:8px;padding:12px;border:1px solid #d7cddd;border-radius:5px;background:#faf5fc;color:var(--ink);font:inherit;resize:vertical}
+#create-post-form legend{font-weight:550}
+.publish-caption{white-space:pre-wrap;overflow-wrap:anywhere;max-height:8rem;overflow:auto}
 #members-workspace{color:var(--muted);font-size:12px;margin:0 0 20px}
 .members-toolbar{display:flex;gap:12px;margin:18px 0;align-items:center}.members-toolbar .search{flex:1}
 #members-status{font-size:11px;color:var(--muted);margin:16px 0}

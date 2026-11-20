@@ -1,17 +1,13 @@
 """Quy tắc chung cho đăng ngay, lịch và worker. Khóa post trước variant/job."""
 
 from app.dependencies import membership
+from app.config import settings
 from app.errors import check
 from app.events import change_status
 from app.modules.posts import load_post
 
 
-def validate_publish(db, post, variant):
-    account = db.one(
-        "SELECT a.*,p.code,p.max_caption_length FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s AND a.workspace_id=%s",
-        (variant["social_account_id"], post["workspace_id"]),
-    )
-    check(account and account["status"] == "connected", 409, "CHANNEL_UNAVAILABLE", "Kênh chưa kết nối")
+def validate_approval(db, post):
     setting = db.one(
         "SELECT setting_value FROM workspace_settings WHERE workspace_id=%s AND setting_key='require_approval'",
         (post["workspace_id"],),
@@ -29,6 +25,16 @@ def validate_publish(db, post, variant):
             "APPROVAL_REQUIRED",
             "Bài chưa được duyệt",
         )
+
+
+def validate_publish(db, post, variant, *, require_approval=True):
+    account = db.one(
+        "SELECT a.*,p.code,p.max_caption_length FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s AND a.workspace_id=%s",
+        (variant["social_account_id"], post["workspace_id"]),
+    )
+    check(account and account["status"] == "connected", 409, "CHANNEL_UNAVAILABLE", "Kênh chưa kết nối")
+    if require_approval:
+        validate_approval(db, post)
     media = db.all(
         "SELECT m.* FROM post_media pm JOIN media_assets m ON m.media_id=pm.media_id WHERE pm.post_id=%s ORDER BY pm.sort_order",
         (post["post_id"],),
@@ -46,6 +52,23 @@ def validate_publish(db, post, variant):
             "VIDEO_REQUIRED",
             "TikTok cần một video",
         )
+    if settings.social_mode == "live":
+        if account["code"] == "facebook":
+            check(
+                len(media) == 1 or all(m["media_type"] == "image" for m in media),
+                422,
+                "UNSUPPORTED_FORMAT",
+                "Facebook hỗ trợ nhiều ảnh hoặc một video",
+            )
+        elif account["code"] == "instagram":
+            check(len(media) == 1, 422, "UNSUPPORTED_FORMAT", "Instagram hỗ trợ một ảnh hoặc một Reel")
+        elif account["code"] == "tiktok":
+            check(
+                (variant["platform_options"] or {}).get("privacy_level"),
+                422,
+                "PRIVACY_REQUIRED",
+                "TikTok cần privacy_level do người dùng chọn",
+            )
     return {"account": account, "media": media, "caption": caption}
 
 

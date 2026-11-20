@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="vi">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#faf3fa"><title>Orbitspace · Workspace của bạn</title><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/chrome-theme.css?v=blush-charcoal-5"><script src="/assets/app.js" defer></script><script src="/assets/members.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#faf3fa"><title>Orbitspace · Workspace của bạn</title><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/chrome-theme.css?v=blush-charcoal-5"><script src="/assets/app.js" defer></script><script src="/assets/members.js" defer></script><script src="/assets/publish.js" defer></script></head>
 <body>
 <aside class="sidebar">
   <a class="brand" href="/" aria-label="Orbitspace trang chủ"><span class="brand-icon">o</span>orbitspace<span class="brand-dot">.</span></a>
@@ -20,7 +20,7 @@
     <footer><span>Không gian tốt cho những điều tuyệt vời.</span></footer>
   </main>
 </div>
-<dialog id="workspace-dialog" aria-labelledby="dialog-title"><form id="workspace-form" novalidate><div class="dialog-heading"><div><span class="eyebrow">KHÔNG GIAN CỦA BẠN</span><h2 id="dialog-title">Tạo workspace mới</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="Đóng">×</button></div><p class="dialog-intro">Một khởi đầu mới cho đội ngũ và thương hiệu của bạn.</p><div id="permission-notice" class="notice" hidden></div><fieldset id="workspace-fields"><label>Tên workspace <span class="required">*</span><input name="name" maxlength="150" required placeholder="Ví dụ: Rikkei Marketing"><small class="field-error" id="name-error"></small></label><label>Đường dẫn workspace <span class="required">*</span><div class="input-prefix"><span>workspace /</span><input name="slug" maxlength="100" required placeholder="rikkei-marketing" pattern="[a-z0-9]+(-[a-z0-9]+)*"></div><small>Dùng chữ thường không dấu, số và dấu gạch ngang.</small><small class="field-error" id="slug-error"></small></label><label>Đường dẫn logo <span class="optional">Không bắt buộc</span><input name="logo_url" type="url" maxlength="500" placeholder="https://example.com/logo.png"><small class="field-error" id="logo_url-error"></small></label><label>Múi giờ <span class="required">*</span><select name="timezone" required><option value="Asia/Ho_Chi_Minh">(UTC+07:00) Việt Nam — Hồ Chí Minh</option><option value="Asia/Bangkok">(UTC+07:00) Bangkok</option><option value="Asia/Singapore">(UTC+08:00) Singapore</option><option value="Asia/Tokyo">(UTC+09:00) Tokyo</option><option value="UTC">(UTC+00:00) UTC</option><option value="Europe/London">London</option><option value="America/New_York">New York</option></select><small class="field-error" id="timezone-error"></small></label></fieldset><div id="form-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><span id="save-hint">Thông tin có dấu * là bắt buộc</span><button type="button" class="secondary" id="members-button" hidden>Thành viên</button><button type="button" class="secondary" id="cancel-dialog">Hủy</button><button type="submit" class="primary" id="save-button">Tạo workspace</button></div></form></dialog>
+<dialog id="workspace-dialog" aria-labelledby="dialog-title"><form id="workspace-form" novalidate><div class="dialog-heading"><div><span class="eyebrow">KHÔNG GIAN CỦA BẠN</span><h2 id="dialog-title">Tạo workspace mới</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="Đóng">×</button></div><p class="dialog-intro">Một khởi đầu mới cho đội ngũ và thương hiệu của bạn.</p><div id="permission-notice" class="notice" hidden></div><fieldset id="workspace-fields"><label>Tên workspace <span class="required">*</span><input name="name" maxlength="150" required placeholder="Ví dụ: Rikkei Marketing"><small class="field-error" id="name-error"></small></label><label>Đường dẫn workspace <span class="required">*</span><div class="input-prefix"><span>workspace /</span><input name="slug" maxlength="100" required placeholder="rikkei-marketing" pattern="[a-z0-9]+(-[a-z0-9]+)*"></div><small>Dùng chữ thường không dấu, số và dấu gạch ngang.</small><small class="field-error" id="slug-error"></small></label><label>Đường dẫn logo <span class="optional">Không bắt buộc</span><input name="logo_url" type="url" maxlength="500" placeholder="https://example.com/logo.png"><small class="field-error" id="logo_url-error"></small></label><label>Múi giờ <span class="required">*</span><select name="timezone" required><option value="Asia/Ho_Chi_Minh">(UTC+07:00) Việt Nam — Hồ Chí Minh</option><option value="Asia/Bangkok">(UTC+07:00) Bangkok</option><option value="Asia/Singapore">(UTC+08:00) Singapore</option><option value="Asia/Tokyo">(UTC+09:00) Tokyo</option><option value="UTC">(UTC+00:00) UTC</option><option value="Europe/London">London</option><option value="America/New_York">New York</option></select><small class="field-error" id="timezone-error"></small></label></fieldset><div id="form-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><span id="save-hint">Thông tin có dấu * là bắt buộc</span><button type="button" class="secondary" id="posts-button" hidden>Bài đăng</button><button type="button" class="secondary" id="members-button" hidden>Thành viên</button><button type="button" class="secondary" id="cancel-dialog">Hủy</button><button type="submit" class="primary" id="save-button">Tạo workspace</button></div></form></dialog>
 <dialog id="auth-dialog" aria-labelledby="auth-title"><form id="auth-form"><div class="dialog-heading"><div><span class="eyebrow">CHÀO MỪNG TRỞ LẠI</span><h2 id="auth-title">Đăng nhập Orbitspace</h2></div><button type="button" class="icon-button" id="close-auth" aria-label="Đóng">×</button></div><p class="dialog-intro">Sử dụng tài khoản đã xác minh của bạn để quản lý workspace.</p><label>Email<input name="email" type="email" autocomplete="username" required placeholder="ban@congty.vn"></label><label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label><div id="auth-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><button class="primary" id="login-button" type="submit">Đăng nhập</button></div></form></dialog>
 <dialog id="account-dialog"><h2 id="profile-name">Tài khoản</h2><p id="profile-email"></p><div class="dialog-actions"><button class="secondary" id="close-account">Đóng</button><button class="primary" id="logout-button">Đăng xuất</button></div></dialog>
 <div id="toast" class="toast" role="status" hidden></div>
@@ -33,4 +33,53 @@
 </dialog>
 <dialog id="member-confirm-dialog" aria-labelledby="member-confirm-title"><h2 id="member-confirm-title">Xác nhận thay đổi</h2><p id="member-confirm-text"></p><div class="dialog-actions"><button class="secondary" id="member-confirm-cancel">Hủy</button><button class="primary" id="member-confirm-ok">Xác nhận</button></div></dialog>
 <dialog id="accept-dialog" aria-labelledby="accept-title"><h2 id="accept-title">Lời mời workspace</h2><p>Đăng nhập bằng email được mời để tham gia workspace.</p><div id="accept-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><button class="secondary" id="accept-close">Đóng</button><button class="primary" id="accept-button">Chấp nhận lời mời</button></div></dialog>
+<dialog id="publish-dialog" aria-labelledby="publish-title">
+  <div class="dialog-heading">
+    <h2 id="publish-title">Bài đăng</h2>
+    <button type="button" class="icon-button" id="close-publish" aria-label="Đóng">×</button>
+  </div>
+  <form id="publish-form">
+    <button type="button" class="secondary" id="new-post" hidden>Tạo bài mới</button>
+    <label>Bài đã lưu<select id="publish-post" required></select></label>
+    <p id="publish-caption" class="publish-caption" hidden></p>
+    <fieldset id="publish-channels" aria-label="Kênh đăng"></fieldset>
+    <div id="publish-error" class="form-error" role="alert" hidden></div>
+    <div class="dialog-actions">
+      <span id="publish-status" role="status"></span>
+      <button type="button" class="secondary" id="refresh-publication">Tải lại</button>
+      <button type="submit" class="primary" id="publish-now" disabled>Đăng ngay</button>
+    </div>
+  </form>
+  <form id="create-post-form" hidden>
+    <fieldset id="create-post-fields" disabled>
+      <label>Tiêu đề <span class="optional">Không bắt buộc</span><input name="title" maxlength="255"></label>
+      <label>Nội dung<textarea name="caption" rows="5" maxlength="65000"></textarea></label>
+      <fieldset>
+        <legend>Kênh đăng</legend>
+        <div id="create-post-channels"></div>
+      </fieldset>
+      <p id="post-media-empty" class="notice" role="status" hidden></p>
+      <label id="post-media-library" hidden>Ảnh hoặc video trong thư viện <span class="optional">Không bắt buộc</span>
+        <select name="media" multiple size="4" aria-describedby="post-media-hint"></select>
+        <small id="post-media-hint">Giữ Ctrl hoặc Command để chọn nhiều tệp.</small>
+      </label>
+      <div id="post-upload-section" hidden>
+        <label>Chọn ảnh hoặc video từ máy
+          <input name="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" aria-describedby="post-upload-hint">
+          <small id="post-upload-hint">Hỗ trợ JPG, PNG, WebP và MP4. Tệp được đính kèm sau khi tải lên.</small>
+        </label>
+        <div id="post-upload-retry" hidden>
+          <button type="button" class="secondary" id="upload-post-media">Thử tải lại</button>
+          <button type="button" class="secondary" id="discard-post-media">Bỏ tệp đang chọn</button>
+        </div>
+      </div>
+    </fieldset>
+    <p id="create-post-status" role="status"></p>
+    <div id="create-post-error" class="form-error" role="alert" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" id="cancel-new-post">Quay lại</button>
+      <button type="submit" class="primary" id="save-new-post" disabled>Lưu bản nháp</button>
+    </div>
+  </form>
+</dialog>
 </body></html>
