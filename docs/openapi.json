@@ -133,7 +133,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TokenInput"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/VerificationInput"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TokenInput"
+                  }
+                ],
+                "title": "Data"
               }
             }
           },
@@ -6464,6 +6472,27 @@
           "social_account_id"
         ],
         "title": "VariantInput"
+      },
+      "VerificationInput": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "title": "Code"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "code"
+        ],
+        "title": "VerificationInput"
       },
       "WorkspaceInput": {
         "properties": {

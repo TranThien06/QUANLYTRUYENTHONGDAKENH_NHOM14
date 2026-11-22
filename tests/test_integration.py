@@ -49,9 +49,10 @@ class Scenario:
             mail = db.one(
                 "SELECT * FROM email_outbox WHERE recipient=%s ORDER BY email_id DESC LIMIT 1", (email,)
             )
-        raw = parse_qs(urlparse(decrypt(mail["body_enc"])).query)["token"][0]
-        self.api("POST", "/auth/verify-email", {"token": raw})
-        self.api("POST", "/auth/verify-email", {"token": raw}, status=422)
+        raw = decrypt(mail["body_enc"])
+        verification = {"email": email, "code": raw}
+        self.api("POST", "/auth/verify-email", verification)
+        self.api("POST", "/auth/verify-email", verification, status=422)
         result = self.api("POST", "/auth/login", {"email": email, "password": password})
         return {
             "email": email,
@@ -328,6 +329,43 @@ def test_oauth_reconnect_tokens_and_images(scenario):
         s.editor["token"],
         422,
     )
+
+
+def test_channel_management_browser_flow_and_workspace_permissions(scenario):
+    s = scenario
+    owner = s.owner["token"]
+    for platform in ("facebook", "instagram", "tiktok"):
+        start = s.api("POST", s.base + f"/social-accounts/oauth/{platform}?browser=true", token=owner)
+        callback = urlparse(start["authorization_url"])
+        response = s.client.get(callback.path + "?" + callback.query)
+        assert response.status_code == 200
+        match = re.search(r"JSON\.stringify\((.+)\)\); location\.replace", response.text)
+        assert match
+        payload = json.loads(match.group(1))["data"]
+        assert "access_token" not in response.text
+        assert payload["accounts"][0]["platform"] == platform
+        selection = {
+            "connection_token": payload["connection_token"],
+            "external_account_ids": [f"mock-{platform}"],
+        }
+        saved = s.api("POST", s.base + "/social-accounts/oauth/complete-selection", selection, owner)
+        s.api("POST", s.base + "/social-accounts/oauth/complete-selection", selection, owner, 422)
+        path = s.base + "/social-accounts/" + saved[0]["social_account_id"]
+        s.api("GET", path, token=s.outsider["token"], status=404)
+        s.api("POST", path + "/check", token=s.editor["token"], status=403)
+        assert s.api("POST", path + "/check", token=owner)["status"] == "connected"
+        assert s.api("GET", path + "/permissions", token=owner)["scopes"]
+        assert s.api("GET", path + "/activity-logs", token=owner)[0]["action"] == "channel.check"
+        filtered = s.api(
+            "GET", s.base + f"/social-accounts?platform={platform}&q=DEMO&status=connected", token=owner
+        )
+        assert [row["external_account_id"] for row in filtered] == [f"mock-{platform}"]
+        assert s.api("POST", path + "/sync/metrics", token=owner, status=202)["status"] == "pending"
+        sync_accounts()
+        assert any(
+            log["status"] == "success" and log["kind"] == "metrics"
+            for log in s.api("GET", path, token=owner)["sync_logs"]
+        )
 
 
 def test_approval_edit_lock_and_publish_permissions(scenario):

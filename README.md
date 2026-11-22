@@ -148,3 +148,7 @@ Các giới hạn tích hợp live giữ như bản trước, xem [PHAM_VI.md](d
 - [Meta Page publishing](https://developers.facebook.com/docs/pages-api/posts/)
 - [Instagram Facebook Login](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/content-publishing/)
 - [TikTok Direct Post](https://developers.tiktok.com/doc/content-posting-api-get-started/)
+
+## Xác minh email qua Gmail
+
+Đã có giao diện đăng ký, trang `/verify-email` và chức năng gửi lại xác minh. Xem [cấu hình Gmail SMTP](docs/EMAIL.md) để gửi thư vào hộp thư thật. Cần chạy API và worker; điền thông tin gửi thư trong `.env`, rồi chuyển `MAIL_MODE=smtp`.

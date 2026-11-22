@@ -68,7 +68,25 @@ def send_one_email():
                 ("Message-ID", message["messageId"]),
             ):
                 email[key] = value
-            email.set_content(message["text"])
+            if item["subject"] == "verify_email_code":
+                email.replace_header("Subject", "Mã xác minh email Orbitspace")
+                email.set_content(
+                    "Mã xác minh tài khoản Orbitspace của bạn: "
+                    + message["text"]
+                    + "\n\nNhập mã này trên website để xác minh email. Mã có hiệu lực 10 phút, chỉ dùng một lần."
+                    "\nKhông chia sẻ mã này. Nếu bạn không đăng ký tài khoản, hãy bỏ qua email này.\n"
+                )
+            elif item["subject"] == "verify_email":
+                email.replace_header("Subject", "Xác minh email tài khoản Orbitspace")
+                email.set_content(
+                    "Chào bạn,\n\n"
+                    "Mở liên kết dưới đây để xác minh email tài khoản Orbitspace:\n"
+                    + message["text"]
+                    + "\n\nLiên kết có hiệu lực 24 giờ và chỉ sử dụng một lần."
+                    "\nNếu bạn không đăng ký tài khoản, bạn có thể bỏ qua email này.\n"
+                )
+            else:
+                email.set_content(message["text"])
             port = int(os.getenv("SMTP_PORT", "587"))
             factory = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
             with factory(os.getenv("SMTP_HOST"), port, timeout=30) as smtp:

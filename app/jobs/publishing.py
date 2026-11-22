@@ -292,10 +292,10 @@ def publish_one():
                     "post",
                     post["post_id"],
                 )
-            if code == "TOKEN_EXPIRED":
+            if code in TOKEN_STATUS:
                 db.execute(
-                    "UPDATE social_accounts SET status='expired',status_message='TOKEN_EXPIRED' WHERE social_account_id=%s",
-                    (variant["social_account_id"],),
+                    "UPDATE social_accounts SET status=%s,status_message=%s WHERE social_account_id=%s",
+                    (TOKEN_STATUS[code], code, variant["social_account_id"]),
                 )
         aggregate(db, current_post)
     return True

@@ -1,18 +1,28 @@
 import json
 from datetime import timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import Field
 from app.common import Input, Id, Pagination, now, ok
+from app.config import settings
 from app.db import transaction
 from app.dependencies import current_user, membership, workspace
-from app.errors import check
+from app.errors import ApiError, check
 from app.events import audit, change_status, notify
 from app.security import token, hash_token, encrypt, decrypt
 from app import social
 
 router = APIRouter(tags=["Kênh và OAuth"])
 Platform = Literal["facebook", "instagram", "tiktok"]
+ConnectionStatus = Literal["connected", "expired", "revoked", "error", "disconnected"]
+TOKEN_STATUS = {"TOKEN_EXPIRED": "expired", "TOKEN_REVOKED": "revoked"}
+EFFECTIVE_STATUS = """CASE
+    WHEN a.status<>'connected' THEN a.status
+    WHEN t.social_account_id IS NULL THEN 'expired'
+    WHEN t.expires_at<=UTC_TIMESTAMP() THEN 'expired'
+    ELSE 'connected'
+END"""
 
 
 class SelectionInput(Input):
@@ -37,6 +47,7 @@ def credentials(db, account_id):
     return {
         "access_token": decrypt(row["access_token_enc"]),
         "refresh_token": decrypt(row["refresh_token_enc"]),
+        "expires_at": row.get("expires_at"),
     }
 
 
@@ -52,14 +63,161 @@ def capabilities(platform: Platform, user=Depends(current_user)):
 
 
 @router.get("/workspaces/{workspace_id}/social-accounts", dependencies=[Depends(workspace())])
-def list_accounts(workspace_id: Id, paging: Pagination = Depends()):
+def list_accounts(
+    workspace_id: Id,
+    paging: Pagination = Depends(),
+    platform: Platform | None = None,
+    status: ConnectionStatus | None = None,
+    q: Annotated[str, Query(max_length=255)] = "",
+):
+    clauses, params = [], [workspace_id]
+    if platform:
+        clauses.append("p.code=%s")
+        params.append(platform)
+    if status:
+        clauses.append(f"({EFFECTIVE_STATUS})=%s")
+        params.append(status)
+    if q.strip():
+        clauses.append(
+            "LOCATE(LOWER(%s),LOWER(CONCAT_WS(' ',a.account_name,a.external_account_id,p.code)))>0"
+        )
+        params.append(q.strip())
+    filters = "".join(" AND " + clause for clause in clauses)
     with transaction() as db:
         return ok(
             db.all(
-                "SELECT a.*,p.code platform FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.workspace_id=%s ORDER BY a.social_account_id LIMIT %s OFFSET %s",
-                (workspace_id, *paging.sql),
+                f"""SELECT a.*,p.code platform,t.expires_at token_expires_at,t.scopes,
+                {EFFECTIVE_STATUS} connection_status
+                FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
+                LEFT JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
+                WHERE a.workspace_id=%s{filters} ORDER BY a.social_account_id LIMIT %s OFFSET %s""",
+                (*params, *paging.sql),
             )
         )
+
+
+ACCOUNT_ROUTE = "/workspaces/{workspace_id}/social-accounts/{account_id}"
+
+
+@router.get(ACCOUNT_ROUTE, dependencies=[Depends(workspace())])
+def account_detail(workspace_id: Id, account_id: Id):
+    with transaction() as db:
+        row = db.one(
+            f"""SELECT a.*,p.code platform,t.expires_at token_expires_at,{EFFECTIVE_STATUS} connection_status
+                FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
+                LEFT JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
+                WHERE a.workspace_id=%s AND a.social_account_id=%s""",
+            (workspace_id, account_id),
+        )
+        check(row, 404, "CHANNEL_NOT_FOUND", "Không tìm thấy kênh")
+        row["sync_logs"] = db.all(
+            """SELECT kind,status,records_updated,error_code,started_at,finished_at
+            FROM channel_sync_logs WHERE social_account_id=%s ORDER BY sync_id DESC LIMIT 10""",
+            (account_id,),
+        )
+    return ok(row)
+
+
+@router.get(ACCOUNT_ROUTE + "/permissions", dependencies=[Depends(workspace())])
+def account_permissions(workspace_id: Id, account_id: Id):
+    with transaction() as db:
+        account(db, workspace_id, account_id)
+        row = db.one("SELECT scopes FROM social_account_tokens WHERE social_account_id=%s", (account_id,))
+    scopes = row["scopes"] if row else None
+    return ok({"known": scopes is not None, "scopes": scopes.split(",") if scopes else []})
+
+
+@router.get(ACCOUNT_ROUTE + "/activity-logs", dependencies=[Depends(workspace())])
+def account_activity(workspace_id: Id, account_id: Id, paging: Pagination = Depends()):
+    with transaction() as db:
+        account(db, workspace_id, account_id)
+        return ok(
+            db.all(
+                """SELECT action,user_id,created_at FROM audit_logs
+            WHERE workspace_id=%s AND entity_type='social_account' AND entity_id=%s
+            ORDER BY audit_id DESC LIMIT %s OFFSET %s""",
+                (workspace_id, account_id, *paging.sql),
+            )
+        )
+
+
+@router.post(ACCOUNT_ROUTE + "/check", dependencies=[Depends(workspace("channel.manage"))])
+def check_account(workspace_id: Id, account_id: Id, request: Request):
+    with transaction() as db:
+        row = account(db, workspace_id, account_id, True)
+        check(row["status"] != "disconnected", 409, "CHANNEL_UNAVAILABLE", "Kênh đã ngắt kết nối")
+        auth = credentials(db, account_id)
+        error_code = None
+        try:
+            if auth["expires_at"] is not None and auth["expires_at"] <= now():
+                raise social.ProviderError("TOKEN_EXPIRED")
+            profile = social.channel_profile(row, auth["access_token"])
+        except social.ProviderError as error:
+            error_code = error.code
+            status = TOKEN_STATUS.get(error.code, row["status"] if error.retryable else "error")
+            db.execute(
+                "UPDATE social_accounts SET status=%s,status_message=%s WHERE social_account_id=%s",
+                (status, error.code, account_id),
+            )
+        else:
+            status = "connected"
+            db.execute(
+                """UPDATE social_accounts SET status='connected',status_message=NULL,
+                account_name=COALESCE(%s,account_name),avatar_url=COALESCE(%s,avatar_url)
+                WHERE social_account_id=%s""",
+                (profile.get("name"), profile.get("avatar_url"), account_id),
+            )
+        audit(
+            db,
+            request,
+            "channel.check",
+            "social_account",
+            account_id,
+            new={"status": status, "error": error_code},
+        )
+    return ok({"status": status, "error_code": error_code})
+
+
+@router.post(ACCOUNT_ROUTE + "/refresh", dependencies=[Depends(workspace("channel.manage"))])
+def refresh_account(workspace_id: Id, account_id: Id, request: Request):
+    with transaction() as db:
+        row = account(db, workspace_id, account_id, True)
+        check(
+            row["status"] not in ("disconnected", "revoked"),
+            409,
+            "CHANNEL_UNAVAILABLE",
+            "Vui lòng kết nối lại kênh",
+        )
+        auth = credentials(db, account_id)
+        check(
+            row["code"] == "tiktok" or settings.social_mode == "mock",
+            409,
+            "RECONNECT_REQUIRED",
+            "Vui lòng cấp quyền lại trên Meta",
+        )
+        check(
+            auth["refresh_token"], 409, "RECONNECT_REQUIRED", "Kênh thiếu token làm mới. Vui lòng kết nối lại"
+        )
+        fresh = social.refresh_remote(row, auth)
+        expires = now() + timedelta(seconds=fresh["expires_in"])
+        db.execute(
+            """UPDATE social_account_tokens SET access_token_enc=%s,refresh_token_enc=%s,
+            expires_at=%s,scopes=COALESCE(%s,scopes),last_refreshed_at=UTC_TIMESTAMP(),refresh_fail_count=0
+            WHERE social_account_id=%s""",
+            (
+                encrypt(fresh["access_token"]),
+                encrypt(fresh.get("refresh_token") or auth["refresh_token"]),
+                expires,
+                fresh.get("scope"),
+                account_id,
+            ),
+        )
+        db.execute(
+            "UPDATE social_accounts SET status='connected',status_message=NULL WHERE social_account_id=%s",
+            (account_id,),
+        )
+        audit(db, request, "channel.refresh", "social_account", account_id)
+    return ok({"status": "connected", "expires_at": expires})
 
 
 @router.post(
@@ -79,6 +237,14 @@ def complete_selection(workspace_id: Id, data: SelectionInput, request: Request)
         for external_id in dict.fromkeys(data.external_account_ids):
             item = next((a for a in available if a["external_account_id"] == external_id), None)
             check(item, 422, "INVALID_ACCOUNT", "Tài khoản không thuộc kết quả OAuth")
+            social.check_oauth_available(item["platform"])
+            demo = item["external_account_id"] == f"mock-{item['platform']}"
+            check(
+                demo == (settings.social_mode == "mock"),
+                409,
+                "CHANNEL_MODE_MISMATCH",
+                "Chế độ kết nối đã thay đổi. Vui lòng bắt đầu lại",
+            )
             platform = db.one("SELECT platform_id FROM platforms WHERE code=%s", (item["platform"],))
             linked_id = None
             if item["platform"] == "instagram":
@@ -92,7 +258,7 @@ def complete_selection(workspace_id: Id, data: SelectionInput, request: Request)
                 linked_id = linked["social_account_id"]
             db.execute(
                 """INSERT INTO social_accounts(workspace_id,platform_id,external_account_id,account_name,account_type,avatar_url,linked_account_id,connected_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE account_name=VALUES(account_name),avatar_url=VALUES(avatar_url),linked_account_id=VALUES(linked_account_id),status='connected',status_message=NULL,disconnected_at=NULL""",
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE account_name=VALUES(account_name),avatar_url=VALUES(avatar_url),linked_account_id=VALUES(linked_account_id),status='connected',status_message=NULL,disconnected_at=NULL,connected_by=VALUES(connected_by),connected_at=UTC_TIMESTAMP()""",
                 (
                     workspace_id,
                     platform["platform_id"],
@@ -117,6 +283,8 @@ def complete_selection(workspace_id: Id, data: SelectionInput, request: Request)
                     encrypt(item["access_token"]),
                     encrypt(item.get("refresh_token")),
                     expires,
+                    item.get("scope"),
+                    item.get("token_type"),
                 ),
             )
             audit(db, request, "channel.connect", "social_account", saved["social_account_id"])
@@ -129,8 +297,11 @@ def complete_selection(workspace_id: Id, data: SelectionInput, request: Request)
     "/workspaces/{workspace_id}/social-accounts/oauth/{platform}",
     dependencies=[Depends(workspace("channel.manage"))],
 )
-def start_oauth(workspace_id: Id, platform: Platform, request: Request):
+def start_oauth(workspace_id: Id, platform: Platform, request: Request, browser: bool = False):
+    social.check_oauth_available(platform)
     raw, verifier = token(), token()
+    if browser:
+        raw = "ui." + raw
     url = social.authorize_url(platform, raw, verifier)
     with transaction() as db:
         db.insert(
@@ -144,7 +315,7 @@ def start_oauth(workspace_id: Id, platform: Platform, request: Request):
                 "expires_at": now() + timedelta(minutes=10),
             },
         )
-    return ok({"authorization_url": url})
+    return ok({"authorization_url": url, **({"callback_origin": settings.app_url} if browser else {})})
 
 
 @router.get("/oauth/{platform}/callback")
@@ -154,6 +325,26 @@ def callback(
     code: str | None = Query(default=None, min_length=1, max_length=2048),
     error: str | None = Query(default=None, max_length=100),
 ):
+    if not state.startswith("ui."):
+        return finish_oauth(platform, state, code, error)
+    try:
+        result = finish_oauth(platform, state, code, error)
+    except ApiError as exc:
+        result = {"error": exc.message}
+    except social.ProviderError:
+        result = {"error": "Nền tảng từ chối hoặc chưa phản hồi. Vui lòng thử kết nối lại."}
+    payload = json.dumps({"state": state, **result}).replace("<", "\\u003c")
+    return HTMLResponse(
+        "<!doctype html><html lang='vi'><meta charset='utf-8'><title>Kết nối kênh</title>"
+        "<script>sessionStorage.setItem('orbitspace-oauth-result', JSON.stringify("
+        + payload
+        + ")); location.replace('/');</script><p>Đang quay lại workspace…</p></html>",
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+def finish_oauth(platform, state, code, error):
+    social.check_oauth_available(platform)
     check(error or code, 422, "INVALID_OAUTH_CALLBACK", "Callback thiếu mã ủy quyền")
     with transaction() as db:
         row = db.one(
@@ -299,7 +490,36 @@ def request_sync(workspace_id: Id, account_id: Id, kind: Literal["metrics", "inb
     with transaction() as db:
         row = account(db, workspace_id, account_id, True)
         check(row["status"] == "connected", 409, "CHANNEL_UNAVAILABLE", "Kênh chưa kết nối")
+        auth = credentials(db, account_id)
+        check(
+            auth["expires_at"] is None or auth["expires_at"] > now(),
+            409,
+            "CHANNEL_UNAVAILABLE",
+            "Kênh hết hạn. Vui lòng kết nối lại",
+        )
+        check(
+            kind != "inbox" or row["code"] == "facebook",
+            422,
+            "CHANNEL_SYNC_UNSUPPORTED",
+            "Nền tảng này chưa hỗ trợ đồng bộ hộp thư",
+        )
+        pending = db.one(
+            """SELECT status FROM channel_sync_logs WHERE social_account_id=%s AND kind=%s
+            AND status IN ('pending','syncing') ORDER BY sync_id DESC LIMIT 1""",
+            (account_id, kind),
+        )
+        if pending:
+            return ok({"status": pending["status"], "kind": kind})
         column = "last_metrics_sync_at" if kind == "metrics" else "last_inbox_sync_at"
+        db.insert(
+            "channel_sync_logs",
+            {
+                "social_account_id": account_id,
+                "kind": kind,
+                "status": "pending",
+                "started_at": now(),
+            },
+        )
         db.execute(f"UPDATE social_accounts SET {column}=NULL WHERE social_account_id=%s", (account_id,))
         audit(db, request, "channel.sync_request", "social_account", account_id, new={"kind": kind})
     return ok({"status": "pending", "kind": kind})

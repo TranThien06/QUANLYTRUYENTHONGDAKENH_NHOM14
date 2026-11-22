@@ -5,7 +5,7 @@ import os
 from urllib.parse import urlencode
 import httpx
 from app.config import settings
-from app.errors import check
+from app.errors import ApiError, check
 from app.modules.media import signed_url
 
 
@@ -21,6 +21,14 @@ INSTAGRAM_SCOPES = (
     "instagram_basic",
     "instagram_content_publish",
     "instagram_manage_insights",
+)
+FACEBOOK_SCOPES = (
+    "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_posts",
+    "pages_messaging",
+    "pages_manage_engagement",
+    "pages_read_user_content",
 )
 
 
@@ -54,15 +62,18 @@ def call(
         if oauth_refresh and code == "invalid_grant":
             raise ProviderError("RECONNECT_REQUIRED")
         rate = response.status_code == 429 or code in ("4", "17", "32", "613")
-        expired = response.status_code == 401 or code == "190"
+        revoked = isinstance(error, dict) and code == "190" and error.get("error_subcode") == 458
+        expired = response.status_code == 401 or code in ("190", "access_token_invalid")
         retry_after = response.headers.get("retry-after", "60")
         raise ProviderError(
-            "TOKEN_EXPIRED"
+            "TOKEN_REVOKED"
+            if revoked
+            else "TOKEN_EXPIRED"
             if expired
             else "RATE_LIMIT"
             if rate
             else "PROVIDER_SCOPE_MISSING"
-            if code in ("scope_not_authorized", "invalid_scope")
+            if code in ("10", "200", "scope_not_authorized", "invalid_scope")
             else "PROVIDER_REJECTED",
             retryable=rate or (not publishing and response.status_code >= 500),
             ambiguous=publishing and response.status_code >= 500,
@@ -119,7 +130,39 @@ def demo_id(variant_id):
     return "demo_" + hashlib.sha256(str(variant_id).encode()).hexdigest()[:20]
 
 
+def check_oauth_available(platform):
+    check(
+        platform in settings.social_oauth_platforms,
+        403,
+        "OAUTH_PLATFORM_DISABLED",
+        "Kết nối qua nền tảng này chưa được bật",
+    )
+    check(
+        not settings.social_oauth_require_live or settings.social_mode == "live",
+        503,
+        "OAUTH_LIVE_REQUIRED",
+        "Kết nối thật chưa sẵn sàng. Quản trị viên cần cấu hình HTTPS và ứng dụng developer",
+    )
+    if settings.social_mode == "live":
+        check(
+            settings.app_url.startswith("https://"),
+            503,
+            "OAUTH_HTTPS_REQUIRED",
+            "Quản trị viên cần cấu hình APP_URL HTTPS cho kết nối thật",
+        )
+        if platform == "tiktok":
+            tiktok_client()
+        else:
+            meta_client()
+            graph_base()
+
+
 def capabilities(platform):
+    try:
+        check_oauth_available(platform)
+        oauth_error = None
+    except ApiError as exc:
+        oauth_error = exc.message
     return {
         "platform": platform,
         "mode": settings.social_mode,
@@ -128,6 +171,9 @@ def capabilities(platform):
         "inbox": platform == "facebook",
         "formats": ["video"] if platform == "tiktok" else ["text", "image", "video"],
         "live_verified": False,
+        "oauth_enabled": platform in settings.social_oauth_platforms,
+        "oauth_ready": oauth_error is None,
+        "oauth_error": oauth_error,
     }
 
 
@@ -147,14 +193,8 @@ def authorize_url(platform, state, verifier):
     graph_base()
     client = meta_client()
     if platform == "facebook":
-        scopes = [
-            "pages_show_list",
-            "pages_read_engagement",
-            "pages_manage_posts",
-            "pages_messaging",
-            "pages_manage_engagement",
-            "pages_read_user_content",
-        ]
+        selected = facebook_oauth_scopes()
+        scopes = tuple(scope for scope in FACEBOOK_SCOPES if scope in selected)
     else:
         scopes = INSTAGRAM_SCOPES
     params = {
@@ -166,6 +206,13 @@ def authorize_url(platform, state, verifier):
         "auth_type": "rerequest",
     }
     return f"https://www.facebook.com/{os.environ['META_API_VERSION']}/dialog/oauth?{urlencode(params)}"
+
+
+def facebook_oauth_scopes():
+    configured = os.getenv("FACEBOOK_OAUTH_SCOPES")
+    if configured is None:
+        return set(FACEBOOK_SCOPES)
+    return {"pages_show_list", *(scope.strip() for scope in configured.split(","))}
 
 
 def tiktok_client():
@@ -202,134 +249,34 @@ def exchange_code(platform, code, verifier):
                 "access_token": "mock-token",
                 "refresh_token": "mock-refresh",
                 "expires_in": 86400,
+                "scope": ",".join(
+                    FACEBOOK_SCOPES
+                    if platform == "facebook"
+                    else INSTAGRAM_SCOPES
+                    if platform == "instagram"
+                    else tiktok_scopes()
+                ),
                 **({"linked_page_external_id": "mock-facebook"} if platform == "instagram" else {}),
             }
         ]
+    adapter = channel_adapter(platform)
     redirect = f"{settings.app_url}/api/v1/oauth/{platform}/callback"
-    if platform == "tiktok":
-        result = call(
-            "https://open.tiktokapis.com/v2/oauth/token/",
-            method="POST",
-            data={
-                **tiktok_client(),
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect,
-            },
-        )
-        check(
-            all(
-                isinstance(result.get(key), str) and result[key]
-                for key in ("access_token", "refresh_token", "open_id")
-            )
-            and isinstance(result.get("scope"), str)
-            and type(result.get("expires_in")) is int
-            and result["expires_in"] > 0,
-            502,
-            "TIKTOK_INVALID_TOKEN_RESPONSE",
-            "TikTok trả về dữ liệu token không hợp lệ",
-        )
-        missing = set(tiktok_scopes()) - {scope.strip() for scope in result["scope"].split(",")}
-        check(
-            not missing,
-            403,
-            "TIKTOK_PERMISSIONS_MISSING",
-            "TikTok chưa cấp quyền: " + ", ".join(sorted(missing)),
-        )
-        profile = tiktok("user/info/?fields=open_id,display_name,avatar_url", result["access_token"])
-        data = profile.get("data")
-        user = data.get("user") if isinstance(data, dict) else None
-        check(
-            isinstance(user, dict)
-            and user.get("open_id") == result["open_id"]
-            and isinstance(user.get("display_name"), str)
-            and user["display_name"],
-            502,
-            "TIKTOK_INVALID_PROFILE",
-            "TikTok trả về thông tin tài khoản không hợp lệ",
-        )
-        return [
-            {
-                **result,
-                "external_account_id": user["open_id"],
-                "account_name": user["display_name"],
-                "avatar_url": user.get("avatar_url"),
-                "account_type": "creator",
-                "platform": platform,
-            }
-        ]
-    endpoint = f"{graph_base()}/oauth/access_token"
-    client = meta_client()
-    result = call(endpoint, params={**client, "code": code, "redirect_uri": redirect})
-    user_token = result.get("access_token")
-    check(user_token, 502, "META_TOKEN_MISSING", "Meta chưa trả token người dùng")
-    result = call(
-        endpoint,
-        params={**client, "grant_type": "fb_exchange_token", "fb_exchange_token": user_token},
-    )
-    user_token = result.get("access_token")
-    check(user_token, 502, "META_TOKEN_MISSING", "Meta chưa trả token người dùng dài hạn")
-    fields = "id,name,access_token,picture"
-    if platform == "instagram":
-        granted = {
-            entry["permission"]
-            for entry in graph_list("me/permissions", user_token, {})
-            if entry.get("status") == "granted"
-        }
-        missing = [scope for scope in INSTAGRAM_SCOPES if scope not in granted]
-        check(
-            not missing,
-            403,
-            "INSTAGRAM_PERMISSIONS_MISSING",
-            "Thiếu quyền Meta: " + ", ".join(missing),
-        )
-        fields = "id,access_token,instagram_business_account{id,username,profile_picture_url}"
+    return adapter.exchange(code, redirect)
 
-    pages = graph_list(
-        "me/accounts",
-        user_token,
-        {"fields": fields, "limit": 100},
-    )
-    accounts = []
-    for page in pages:
-        if not page.get("access_token"):
-            continue
-        if platform == "facebook":
-            accounts.append(
-                {
-                    "external_account_id": page["id"],
-                    "account_name": page["name"],
-                    "avatar_url": (page.get("picture") or {}).get("data", {}).get("url"),
-                    "account_type": "page",
-                    "platform": platform,
-                    "access_token": page["access_token"],
-                }
-            )
-        else:
-            user = page.get("instagram_business_account") or {}
-            if not (page.get("id") and user.get("id") and user.get("username")):
-                continue
-            accounts.append(
-                {
-                    "external_account_id": user["id"],
-                    "account_name": user["username"],
-                    "avatar_url": user.get("profile_picture_url"),
-                    "account_type": "business",
-                    "platform": platform,
-                    "access_token": page["access_token"],
-                    "linked_page_external_id": page["id"],
-                }
-            )
-    if platform == "facebook":
-        check(accounts, 422, "NO_FACEBOOK_PAGES", "Không tìm thấy Page được cấp quyền kết nối")
-    else:
-        check(
-            accounts,
-            422,
-            "NO_ELIGIBLE_INSTAGRAM_ACCOUNTS",
-            "Không tìm thấy Instagram Business hoặc Creator liên kết với Facebook Page được cấp quyền",
-        )
-    return accounts
+
+def channel_adapter(platform):
+    from app.channel_providers import facebook, instagram, tiktok
+
+    return {"facebook": facebook, "instagram": instagram, "tiktok": tiktok}[platform]
+
+
+def channel_profile(account, access_token):
+    identifier = account["external_account_id"]
+    platform = account["code"]
+    demo = identifier == f"mock-{platform}"
+    if demo != (settings.social_mode == "mock"):
+        raise ProviderError("CHANNEL_MODE_MISMATCH")
+    return {} if demo else channel_adapter(platform).profile(identifier, access_token)
 
 
 def publish_remote(account, variant, media, caption, access_token, progress, save_progress):
