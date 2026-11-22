@@ -1,0 +1,42 @@
+/* Connected channels: scoped styles keep the existing workspace layout intact. */
+#channels-dialog{width:min(940px,calc(100% - 30px))}
+#channels-workspace{color:var(--muted);margin:6px 0;overflow-wrap:anywhere}
+.channels-summary{padding:16px 20px;border:1px solid var(--border);border-radius:12px;background:var(--bg);font-weight:600;margin-bottom:20px}
+.channels-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.channels-toolbar[hidden],.channel-platform-picker[hidden],#channel-pagination[hidden],#channel-selection[hidden]{display:none}
+.channel-platform-picker,.channel-menu-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.channel-platform-picker button:hover,.channel-menu-actions button:hover{filter:brightness(1.18)}
+.channel-platform-picker .channel-facebook{border-color:#649df4;color:#9cc3ff;background:#101c36}
+.channel-platform-picker .channel-instagram{border-color:#e990d7;color:#f9b8ec;background:linear-gradient(120deg,#28183c,#39172e)}
+.channel-platform-picker .channel-tiktok{border-color:#44eada;color:#79f2e7;background:#101218;box-shadow:inset -2px 0 #ff5b91}
+.channel-menu summary{cursor:pointer;font-weight:600}
+.channel-menu-actions button{font-size:12px;padding:7px 11px}
+.channel-avatar{width:40px;height:40px;flex:none;border-radius:50%;object-fit:cover}
+#channel-detail{margin-top:16px}
+#channel-detail p{overflow-wrap:anywhere}
+#channel-connect-mode{color:var(--muted);font-size:12px}
+#channel-selection{margin-bottom:20px}
+#channel-choices{display:grid;gap:8px;max-height:240px;overflow:auto}
+#channel-choices label{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
+#channel-choices input{width:auto;flex:none}
+.channels-toolbar .search{flex:1;min-width:0}
+.channels-toolbar select{padding:11px;border:1px solid var(--border);border-radius:8px;color:var(--ink);background:var(--bg);max-width:100%}
+.channel-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.channel-card{border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--bg)}
+.channel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.channel-identity{display:flex;gap:12px;min-width:0}
+.channel-identity>div{min-width:0}
+.channel-icon{flex-shrink:0;display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:#e6eafa;color:#3853a3;font-weight:700;font-size:21px}
+.channel-instagram{background:#f8e3ef;color:#a22e72}.channel-tiktok{background:#d8f5f3;color:#176861}
+.channel-platform{color:var(--muted);font-size:11px}
+.channel-card h3{font-size:15px;margin:5px 0 0;overflow-wrap:anywhere}
+.channel-badge{flex-shrink:0;padding:5px 9px;border-radius:20px;font-size:10px;background:#eee;color:#555}
+.channel-status-connected{background:#def5e9;color:#216447}.channel-status-expired{background:#fff0cd;color:#805a0a}.channel-status-error{background:#ffe1e6;color:#9d304a}.channel-status-disconnected{background:#e9e9ee;color:#606071}
+.channel-status-revoked{background:#f0deff;color:#6c2487}
+.channel-details{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:22px 0 0}
+.channel-details dt{font-size:10px;color:var(--muted);margin-bottom:5px}
+.channel-details dd{margin:0;font-size:11px;overflow-wrap:anywhere;line-height:1.6}
+.channel-note{font-size:11px;line-height:1.7;color:var(--muted);border-top:1px solid var(--border);padding-top:12px;margin:14px 0 0;overflow-wrap:anywhere}
+.channels-footnote{font-size:10px;color:var(--muted);line-height:1.8;margin-top:22px}
+#workspace-dialog .dialog-actions{flex-wrap:wrap}
+@media(max-width:640px){.channel-list{grid-template-columns:1fr}.channels-toolbar{flex-wrap:wrap}.channels-toolbar .search{flex-basis:100%}.channel-header{flex-wrap:wrap}.channel-card{padding:16px}}

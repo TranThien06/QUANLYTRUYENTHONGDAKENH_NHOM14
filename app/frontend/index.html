@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="vi">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#050619"><title>Orbitspace · Workspace của bạn</title><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/chrome-theme.css?v=login-hover-12"><script src="/assets/app.js?v=register-otp-4" defer></script><script src="/assets/members.js" defer></script><script src="/assets/verification.js?v=3" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#050619"><title>Orbitspace · Workspace của bạn</title><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/chrome-theme.css?v=login-hover-12"><script src="/assets/app.js?v=channel-management-2" defer></script><script src="/assets/members.js" defer></script><script src="/assets/verification.js?v=3" defer></script><link rel="stylesheet" href="/assets/channels.css?v=channel-management-2"><script src="/assets/channels.js?v=facebook-pilot-2" defer></script></head>
 <body>
 <aside class="sidebar">
   <a class="brand" href="/" aria-label="Orbitspace trang chủ"><span class="brand-icon">o</span>orbitspace<span class="brand-dot">.</span></a>
@@ -20,7 +20,7 @@
     <footer><span>Không gian tốt cho những điều tuyệt vời.</span></footer>
   </main>
 </div>
-<dialog id="workspace-dialog" aria-labelledby="dialog-title"><form id="workspace-form" novalidate><div class="dialog-heading"><div><span class="eyebrow">KHÔNG GIAN CỦA BẠN</span><h2 id="dialog-title">Tạo workspace mới</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="Đóng">×</button></div><p class="dialog-intro">Một khởi đầu mới cho đội ngũ và thương hiệu của bạn.</p><div id="permission-notice" class="notice" hidden></div><fieldset id="workspace-fields"><label>Tên workspace <span class="required">*</span><input name="name" maxlength="150" required placeholder="Ví dụ: Rikkei Marketing"><small class="field-error" id="name-error"></small></label><label>Đường dẫn workspace <span class="required">*</span><div class="input-prefix"><span>workspace /</span><input name="slug" maxlength="100" required placeholder="rikkei-marketing" pattern="[a-z0-9]+(-[a-z0-9]+)*"></div><small>Dùng chữ thường không dấu, số và dấu gạch ngang.</small><small class="field-error" id="slug-error"></small></label><label>Đường dẫn logo <span class="optional">Không bắt buộc</span><input name="logo_url" type="url" maxlength="500" placeholder="https://example.com/logo.png"><small class="field-error" id="logo_url-error"></small></label><label>Múi giờ <span class="required">*</span><select name="timezone" required><option value="Asia/Ho_Chi_Minh">(UTC+07:00) Việt Nam — Hồ Chí Minh</option><option value="Asia/Bangkok">(UTC+07:00) Bangkok</option><option value="Asia/Singapore">(UTC+08:00) Singapore</option><option value="Asia/Tokyo">(UTC+09:00) Tokyo</option><option value="UTC">(UTC+00:00) UTC</option><option value="Europe/London">London</option><option value="America/New_York">New York</option></select><small class="field-error" id="timezone-error"></small></label></fieldset><div id="form-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><span id="save-hint">Thông tin có dấu * là bắt buộc</span><button type="button" class="secondary" id="members-button" hidden>Thành viên</button><button type="button" class="secondary" id="cancel-dialog">Hủy</button><button type="submit" class="primary" id="save-button">Tạo workspace</button></div></form></dialog>
+<dialog id="workspace-dialog" aria-labelledby="dialog-title"><form id="workspace-form" novalidate><div class="dialog-heading"><div><span class="eyebrow">KHÔNG GIAN CỦA BẠN</span><h2 id="dialog-title">Tạo workspace mới</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="Đóng">×</button></div><p class="dialog-intro">Một khởi đầu mới cho đội ngũ và thương hiệu của bạn.</p><div id="permission-notice" class="notice" hidden></div><fieldset id="workspace-fields"><label>Tên workspace <span class="required">*</span><input name="name" maxlength="150" required placeholder="Ví dụ: Rikkei Marketing"><small class="field-error" id="name-error"></small></label><label>Đường dẫn workspace <span class="required">*</span><div class="input-prefix"><span>workspace /</span><input name="slug" maxlength="100" required placeholder="rikkei-marketing" pattern="[a-z0-9]+(-[a-z0-9]+)*"></div><small>Dùng chữ thường không dấu, số và dấu gạch ngang.</small><small class="field-error" id="slug-error"></small></label><label>Đường dẫn logo <span class="optional">Không bắt buộc</span><input name="logo_url" type="url" maxlength="500" placeholder="https://example.com/logo.png"><small class="field-error" id="logo_url-error"></small></label><label>Múi giờ <span class="required">*</span><select name="timezone" required><option value="Asia/Ho_Chi_Minh">(UTC+07:00) Việt Nam — Hồ Chí Minh</option><option value="Asia/Bangkok">(UTC+07:00) Bangkok</option><option value="Asia/Singapore">(UTC+08:00) Singapore</option><option value="Asia/Tokyo">(UTC+09:00) Tokyo</option><option value="UTC">(UTC+00:00) UTC</option><option value="Europe/London">London</option><option value="America/New_York">New York</option></select><small class="field-error" id="timezone-error"></small></label></fieldset><div id="form-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><span id="save-hint">Thông tin có dấu * là bắt buộc</span><button type="button" class="secondary" id="channels-button" hidden>Quản lý kênh</button><button type="button" class="secondary" id="members-button" hidden>Thành viên</button><button type="button" class="secondary" id="cancel-dialog">Hủy</button><button type="submit" class="primary" id="save-button">Tạo workspace</button></div></form></dialog>
 <dialog id="auth-dialog" aria-labelledby="auth-title"><form id="auth-form"><div class="dialog-heading"><div><span class="eyebrow">CHÀO MỪNG TRỞ LẠI</span><h2 id="auth-title">Đăng nhập Orbitspace</h2></div><button type="button" class="icon-button" id="close-auth" aria-label="Đóng">×</button></div><p class="dialog-intro">Sử dụng tài khoản đã xác minh của bạn để quản lý workspace.</p><label>Email<input name="email" type="email" autocomplete="username" required placeholder="ban@congty.vn"></label><label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label><div id="auth-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><button type="button" class="secondary" id="open-resend-button">Gửi lại xác minh</button><button type="button" class="secondary" id="auth-register-button">Đăng ký</button><button class="primary" id="login-button" type="submit">Đăng nhập</button></div></form></dialog>
 <dialog id="register-dialog" aria-labelledby="register-title"><form id="register-form"><div class="dialog-heading"><div><span class="eyebrow">BẮT ĐẦU CÙNG ORBITSPACE</span><h2 id="register-title">Tạo tài khoản</h2></div><button type="button" class="icon-button" id="close-register" aria-label="Đóng">×</button></div><p class="dialog-intro">Đăng ký tài khoản và xác minh email để bắt đầu cộng tác.</p><fieldset id="register-fields"><label>Họ và tên<input name="full_name" autocomplete="name" maxlength="150" required placeholder="Nguyễn Văn An"></label><label>Email<input name="email" type="email" autocomplete="username" required placeholder="ban@congty.vn"></label><label>Mật khẩu<input name="password" type="password" autocomplete="new-password" minlength="8" required aria-describedby="register-password-hint"><small id="register-password-hint">Tối thiểu 8 ký tự, tối đa 72 byte UTF-8.</small></label><label>Nhập lại mật khẩu<input name="confirm_password" type="password" autocomplete="new-password" required></label></fieldset><div id="register-error" class="form-error" role="alert" hidden></div><div id="register-success" class="notice" role="status" hidden></div><div class="dialog-actions"><button type="button" class="secondary" id="register-login-button">Đăng nhập</button><button type="button" class="primary" id="register-verify-button" hidden>Nhập mã xác minh</button><button class="primary" id="register-submit" type="submit">Đăng ký</button></div></form></dialog>
 <dialog id="verification-dialog" aria-labelledby="verification-title"><div class="dialog-heading"><h2 id="verification-title">Xác minh email</h2><button type="button" class="icon-button" id="close-verification" aria-label="Đóng">×</button></div><p id="verification-status" class="notice" role="status">Nhập mã 6 chữ số được gửi tới email của bạn. Mã có hiệu lực 10 phút.</p><form id="verify-code-form"><label>Email<input name="email" type="email" autocomplete="email" required placeholder="ban@congty.vn"></label><label>Mã xác minh<input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="000000"></label><div class="dialog-actions"><button class="secondary" type="button" id="resend-submit">Gửi lại mã</button><button class="primary" type="submit" id="verify-code-submit">Xác minh</button></div></form><div id="resend-status" class="notice" role="status" hidden></div><div class="dialog-actions"><button class="primary" type="button" id="verification-login">Đăng nhập</button></div></dialog>
@@ -35,4 +35,83 @@
 </dialog>
 <dialog id="member-confirm-dialog" aria-labelledby="member-confirm-title"><h2 id="member-confirm-title">Xác nhận thay đổi</h2><p id="member-confirm-text"></p><div class="dialog-actions"><button class="secondary" id="member-confirm-cancel">Hủy</button><button class="primary" id="member-confirm-ok">Xác nhận</button></div></dialog>
 <dialog id="accept-dialog" aria-labelledby="accept-title"><h2 id="accept-title">Lời mời workspace</h2><p>Đăng nhập bằng email được mời để tham gia workspace.</p><div id="accept-error" class="form-error" role="alert" hidden></div><div class="dialog-actions"><button class="secondary" id="accept-close">Đóng</button><button class="primary" id="accept-button">Chấp nhận lời mời</button></div></dialog>
+<dialog id="channels-dialog" aria-labelledby="channels-title">
+  <div class="dialog-heading"><div><span class="eyebrow">KẾT NỐI ĐA KÊNH</span><h2 id="channels-title">Quản lý kênh</h2><p id="channels-workspace"></p></div><button type="button" class="icon-button" id="close-channels" aria-label="Đóng danh sách kênh">×</button></div>
+  <p class="dialog-intro">Theo dõi các tài khoản mạng xã hội và tình trạng kết nối trong không gian này.</p>
+  <div id="channel-connect-controls" class="channels-toolbar" hidden>
+    <button type="button" class="primary" id="connect-channel" aria-expanded="false">+ Kết nối kênh</button>
+    <span id="channel-connect-mode" hidden>Chế độ thử nghiệm · Kênh mẫu</span>
+  </div>
+  <div class="channel-platform-picker" id="channel-platform-picker" hidden>
+    <button type="button" class="secondary channel-facebook" data-platform="facebook">Facebook</button>
+    <button type="button" class="secondary channel-instagram" data-platform="instagram">Instagram</button>
+    <button type="button" class="secondary channel-tiktok" data-platform="tiktok">TikTok</button>
+  </div>
+  <div id="channel-connect-error" class="form-error" role="alert" hidden></div>
+  <form id="channel-selection" hidden>
+    <fieldset>
+      <legend id="channel-selection-title">Chọn tài khoản</legend>
+      <div id="channel-choices"></div>
+    </fieldset>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" id="cancel-channel-selection">Hủy</button>
+      <button type="submit" class="primary">Kết nối tài khoản đã chọn</button>
+    </div>
+  </form>
+  <div id="channels-summary" class="channels-summary" hidden></div>
+  <div class="channels-toolbar">
+    <label class="search"><input id="channel-search" type="search" maxlength="255" placeholder="Tìm tài khoản hoặc ID…" aria-label="Tìm kênh"></label>
+    <select id="channel-status" aria-label="Lọc trạng thái"><option value="">Tất cả trạng thái</option><option value="connected">Đã kết nối</option><option value="expired">Cần kết nối lại</option><option value="error">Lỗi kết nối</option><option value="disconnected">Đã ngắt kết nối</option></select>
+    <select id="channel-platform" aria-label="Lọc nền tảng"><option value="">Tất cả nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select>
+    <button type="button" class="secondary" id="refresh-channels">Tải lại</button>
+  </div>
+  <div id="channels-error" class="form-error" role="alert" hidden></div>
+  <p id="channels-status" role="status" aria-live="polite"></p>
+  <div id="channel-list" class="channel-list"></div>
+  <div class="dialog-actions" id="channel-pagination" hidden>
+    <button type="button" class="secondary" id="channel-prev">Trang trước</button>
+    <span id="channel-page"></span>
+    <button type="button" class="secondary" id="channel-next">Trang sau</button>
+  </div>
+  <section id="channel-detail" class="channel-card" tabindex="-1" hidden></section>
+  <p class="channels-footnote">Trạng thái dựa trên thông tin kết nối, hạn token và kết quả đồng bộ gần nhất. Chọn Tải lại để cập nhật.</p>
+</dialog>
+<button type="button" class="secondary" id="posts-button" hidden>Bản nháp</button>
+<dialog id="posts-dialog" aria-labelledby="posts-title">
+  <div class="dialog-heading">
+    <div><h2 id="posts-title">Bản nháp</h2><p id="posts-workspace"></p></div>
+    <button type="button" class="icon-button" id="posts-close" aria-label="Đóng bản nháp">×</button>
+  </div>
+  <p id="posts-error" class="form-error" role="alert" hidden></p>
+  <section id="draft-library" aria-label="Danh sách bản nháp">
+    <button type="button" class="primary" id="draft-new" hidden>Tạo bài</button>
+    <div id="draft-list" aria-live="polite"></div>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" id="draft-previous" hidden>Trang trước</button>
+      <button type="button" class="secondary" id="draft-next" hidden>Trang sau</button>
+    </div>
+  </section>
+  <form id="draft-editor" hidden>
+    <div class="draft-layout">
+      <div>
+        <label>Tiêu đề<input id="draft-title" maxlength="255"></label>
+        <label>Caption gốc<textarea id="draft-caption" rows="5" maxlength="65000"></textarea></label>
+        <fieldset><legend>Kênh đích</legend><div id="draft-channels"></div></fieldset>
+        <div id="draft-captions"></div>
+      </div>
+      <section class="draft-preview" aria-labelledby="draft-preview-heading">
+        <h3 id="draft-preview-heading">Xem trước</h3>
+        <label>Kênh xem trước<select id="draft-preview-channel"></select></label>
+        <div id="draft-preview-card"></div>
+      </section>
+    </div>
+    <p id="draft-status" role="status"></p>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" id="draft-back">Danh sách bản nháp</button>
+      <button type="submit" class="primary" id="draft-save">Lưu bản nháp</button>
+    </div>
+  </form>
+</dialog>
+<link rel="stylesheet" href="/assets/posts.css">
+<script src="/assets/posts.js" defer></script>
 </body></html>

@@ -2,6 +2,7 @@ import hashlib
 from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import Field
+from app.channel_policy import publishable_account
 from app.common import Input, Id, Pagination, ok
 from app.db import transaction, json_value
 from app.dependencies import workspace, membership
@@ -70,6 +71,8 @@ def save_content(db, workspace_id, post_id, data):
     accounts = [v.social_account_id for v in data.variants]
     check(len(accounts) == len(set(accounts)), 422, "DUPLICATE_CHANNEL", "Kênh bị lặp")
     check(len(data.media_ids) == len(set(data.media_ids)), 422, "DUPLICATE_MEDIA", "Media bị lặp")
+    old_variants = db.all("SELECT * FROM post_variants WHERE post_id=%s", (post_id,))
+    existing_accounts = {str(variant["social_account_id"]) for variant in old_variants}
     for account_id in accounts:
         check(
             db.one(
@@ -80,6 +83,8 @@ def save_content(db, workspace_id, post_id, data):
             "INVALID_CHANNEL",
             "Kênh không thuộc workspace",
         )
+        if account_id not in existing_accounts:
+            publishable_account(db, workspace_id, account_id)
     for media_id in data.media_ids:
         check(
             db.one(
@@ -90,7 +95,7 @@ def save_content(db, workspace_id, post_id, data):
             "INVALID_MEDIA",
             "Media không thuộc workspace hoặc đã xóa",
         )
-    for old in db.all("SELECT * FROM post_variants WHERE post_id=%s", (post_id,)):
+    for old in old_variants:
         if str(old["social_account_id"]) not in accounts:
             used = db.one(
                 "SELECT 1 FROM publish_jobs WHERE variant_id=%s UNION SELECT 1 FROM schedules WHERE variant_id=%s LIMIT 1",

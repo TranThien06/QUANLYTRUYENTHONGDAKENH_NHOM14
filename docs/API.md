@@ -65,6 +65,30 @@ Mời: `{"email":"dung@example.com","role":"editor"}`. Nhận: `{"email":"thien@
 
 ## 3. Kết nối kênh qua OAuth
 
+Trong giao diện, mở workspace, chọn **Quản lý kênh**, bấm **+ Kết nối kênh** và chọn nền tảng. Sau khi cấp quyền, chọn tài khoản trong danh sách và xác nhận. Người có quyền `channel.manage` có thể kết nối, kiểm tra, làm mới token, yêu cầu đồng bộ và ngắt kết nối. Thành viên có quyền truy cập workspace có thể xem danh sách, quyền hiện có và lịch sử kênh.
+
+Chạy `python -m scripts.migrate` để áp dụng migration 004 trước khi khởi động API và worker. `SOCIAL_MODE=mock` dùng cho phát triển và gắn nhãn **Kênh mẫu**. Để kiểm thử tài khoản thật, đặt `SOCIAL_MODE=live`, cấu hình thông tin ứng dụng theo nền tảng ở máy chủ và dùng chính địa chỉ HTTPS trong `APP_URL` để mở giao diện. `APP_URL` và địa chỉ callback phải cùng origin với giao diện để hệ thống quay về đúng phiên đăng nhập sau khi cấp quyền.
+
+Cùng một tài khoản có thể liên kết với nhiều workspace nếu người thực hiện có quyền trong từng workspace và tự cấp quyền nền tảng. Trong mỗi workspace, cặp nền tảng và ID tài khoản là duy nhất. Kết nối lại cập nhật bản ghi hiện tại. Ngắt kết nối chỉ thu hồi token lưu trong workspace đó, giữ lịch sử và hủy các lịch chưa gửi của kênh.
+
+API bài đăng kiểm tra quyền đăng khi thêm kênh mới vào bài, khi lập lịch hoặc đăng, và trước lúc worker gửi. Các kênh đã có trong bản nháp vẫn có thể được chỉnh sửa. Kênh thật cũ chưa có thông tin quyền cần được kết nối lại trước khi đăng.
+
+Các API quản lý theo phạm vi workspace dùng đường dẫn `W/social-accounts`.
+
+| Phương thức và đường dẫn | Dữ liệu hoặc thao tác |
+| --- | --- |
+| `GET W/social-accounts?q=&platform=&status=&page=1&limit=20` | Tìm theo tên/ID, lọc và phân trang |
+| `GET W/social-accounts/{id}` | Chi tiết và 10 lượt đồng bộ gần nhất |
+| `GET W/social-accounts/{id}/permissions` | Quyền ghi nhận lúc cấp hoặc làm mới token. Kênh cũ có thể cần kết nối lại |
+| `GET W/social-accounts/{id}/activity-logs?page=1&limit=20` | Lịch sử thao tác theo kênh |
+| `POST W/social-accounts/{id}/check` | Kiểm tra token và nhận dạng tài khoản qua nhà cung cấp |
+| `POST W/social-accounts/{id}/refresh` | Làm mới token TikTok. Meta yêu cầu cấp quyền lại khi cần |
+| `POST W/social-accounts/{id}/sync/metrics` | Yêu cầu làm mới số liệu |
+| `POST W/social-accounts/{id}/sync/inbox` | Yêu cầu làm mới hộp thư Facebook |
+| `POST W/social-accounts/{id}/disconnect` | Ngắt kênh và hủy lịch chưa gửi |
+
+Đồng bộ có trạng thái `pending`, `syncing`, `success` và `failed`. Số bản ghi là số dòng số liệu tài khoản hoặc số hội thoại đã xử lý, gồm bản ghi được cập nhật lại. OAuth web TikTok dùng state và callback HTTPS theo Login Kit. TikTok áp dụng PKCE cho các biến thể desktop/mobile. [TikTok Login Kit Web](https://developers.tiktok.com/docs/en/login-kit-web)
+
 1. `POST W/social-accounts/oauth/facebook` (hoặc instagram/tiktok), lấy authorization_url.
 2. Mở URL đó. Trong mock, URL đi thẳng callback nội bộ, không yêu cầu tài khoản thật.
 3. Callback trả `connection_token` và danh sách tài khoản; token này hết hạn sau 10 phút, không phải OAuth access token.
@@ -78,6 +102,14 @@ Kết nối lại cập nhật token trên cùng bản ghi. `GET W/social-accoun
 
 ### Kiểm thử Facebook Page thật
 
+Để mở thử nghiệm chỉ cho Facebook, đặt `SOCIAL_OAUTH_PLATFORMS=facebook` và
+`SOCIAL_OAUTH_REQUIRE_LIVE=true`. Giao diện chỉ mở nút kết nối Facebook khi
+máy chủ đã có cấu hình OAuth live. Nếu chỉ kiểm tra kết nối và đồng bộ cơ bản,
+đặt `FACEBOOK_OAUTH_SCOPES=pages_show_list,pages_read_engagement`. Cấp thêm
+`pages_manage_posts` và kết nối lại nếu thử đăng trên Page có quyền tạo nội dung.
+
+Trong Meta App Dashboard, bật sản phẩm đăng nhập phù hợp, khai báo chính sách quyền riêng tư và gửi App Review cho những quyền cần Advanced Access khi dùng với người ngoài vai trò ứng dụng. Các thao tác đăng bài và hộp thư phụ thuộc quyền đã cấp và nhiệm vụ trên Trang. [Meta Pages API](https://developers.facebook.com/docs/graph-api/reference/page/) · [Meta Insights và Advanced Access](https://developers.facebook.com/docs/insights/overview)
+
 1. Đặt `SOCIAL_MODE=live`, `APP_URL=https://<tên-miền-API>`, `META_APP_ID`, `META_APP_SECRET` và `META_API_VERSION` trong cấu hình backend. Đăng ký chính xác `https://<tên-miền-API>/api/v1/oauth/facebook/callback` trong **Valid OAuth Redirect URIs** của Meta App.
 2. Đăng nhập API bằng tài khoản có quyền `channel.manage`. Mở `authorization_url` bằng tài khoản Facebook có quyền trên Page và có thể dùng Meta App. Kiểm tra các quyền Pages được yêu cầu trong Meta App, gồm `pages_show_list` để liệt kê Page.
 3. Callback trả JSON tại URL của backend. Lấy `connection_token` và ID Page từ danh sách, rồi gọi `complete-selection` với Bearer token của người đã bắt đầu OAuth trong cùng workspace.
@@ -87,6 +119,8 @@ Backend đổi mã ủy quyền lấy user token dài hạn, dùng token đó đ
 
 ### Kết nối Instagram Business hoặc Creator
 
+Luồng này dùng Instagram API with Facebook Login. Tài khoản chuyên nghiệp phải liên kết với Facebook Page, và Page cần có trong cùng workspace. [Meta Instagram API](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/v21.0/)
+
 1. Liên kết tài khoản Instagram chuyên nghiệp với Facebook Page trong Meta và kết nối Page đó vào workspace qua OAuth Facebook.
 2. Trong chế độ live, đăng ký thêm `https://<tên-miền-API>/api/v1/oauth/instagram/callback` trong Meta App. Cấp `pages_show_list`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish` và `instagram_manage_insights`. Callback trả `INSTAGRAM_PERMISSIONS_MISSING` (403) nếu thiếu quyền.
 3. Bắt đầu OAuth qua `POST W/social-accounts/oauth/instagram`. Callback trả tài khoản chuyên nghiệp Meta cho phép truy cập cùng `linked_page_external_id`. Nếu danh sách trống, API trả `NO_ELIGIBLE_INSTAGRAM_ACCOUNTS` (422).
@@ -95,6 +129,8 @@ Backend đổi mã ủy quyền lấy user token dài hạn, dùng token đó đ
 Meta trả cả Business và Creator qua trường `instagram_business_account`. Luồng Facebook Login này lưu cả hai dưới `account_type=business`.
 
 ### Kết nối TikTok qua Login Kit
+
+Thêm Login Kit trong TikTok Developer Portal. Xin các quyền theo tính năng đã bật. Nội dung của ứng dụng chưa qua audit bị giới hạn chế độ xem riêng tư. Với `PULL_FROM_URL`, TikTok yêu cầu xác minh tên miền hoặc tiền tố URL chứa video. [TikTok Scopes](https://developers.tiktok.com/docs/en/scopes-overview) · [TikTok Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post)
 
 1. Đặt `SOCIAL_MODE=live`, `APP_URL=https://<tên-miền-API>`, `TIKTOK_CLIENT_KEY` và `TIKTOK_CLIENT_SECRET` ở backend. Đăng ký chính xác `https://<tên-miền-API>/api/v1/oauth/tiktok/callback` trong Login Kit.
 2. Quyền mặc định là `user.info.basic`. Nếu ứng dụng đã được TikTok duyệt quyền cho các tính năng tương ứng, thêm `user.info.stats,video.publish,video.list` vào `TIKTOK_EXTRA_SCOPES` theo nhu cầu.

@@ -4,7 +4,7 @@ from app.common import now
 from app.config import settings
 from app.db import transaction, json_value
 from app.events import notify_managers
-from app.modules.channels import credentials
+from app.modules.channels import TOKEN_STATUS, credentials
 from app.security import encrypt
 from app.social import refresh_remote, account_metrics, post_metrics, inbox_remote, ProviderError
 
@@ -41,11 +41,12 @@ def refresh_tokens():
                 auth = credentials(db, account["social_account_id"])
                 fresh = refresh_remote(account, auth)
                 db.execute(
-                    "UPDATE social_account_tokens SET access_token_enc=%s,refresh_token_enc=%s,expires_at=%s,refresh_fail_count=0 WHERE social_account_id=%s",
+                    "UPDATE social_account_tokens SET access_token_enc=%s,refresh_token_enc=%s,expires_at=%s,scopes=COALESCE(%s,scopes),refresh_fail_count=0 WHERE social_account_id=%s",
                     (
                         encrypt(fresh["access_token"]),
                         encrypt(fresh.get("refresh_token") or auth["refresh_token"]),
                         now() + timedelta(seconds=fresh["expires_in"]),
+                        fresh.get("scope"),
                         account["social_account_id"],
                     ),
                 )
@@ -97,6 +98,7 @@ def sync_account(db, account):
             json_value(metrics.get("extra_metrics", {})),
         ),
     )
+    return 1
 
 
 def sync_inbox(db, account):
@@ -148,6 +150,7 @@ def sync_inbox(db, account):
             "UPDATE conversations SET last_message_at=(SELECT MAX(sent_at) FROM messages WHERE conversation_id=%s) WHERE conversation_id=%s",
             (conversation["conversation_id"], conversation["conversation_id"]),
         )
+    return len(threads)
 
 
 def sync_accounts():
@@ -155,36 +158,99 @@ def sync_accounts():
         ("metrics", "last_metrics_sync_at", "1 DAY"),
         ("inbox", "last_inbox_sync_at", "5 MINUTE"),
     ):
+        platform_filter = (
+            " AND a.platform_id IN (SELECT platform_id FROM platforms WHERE code='facebook')"
+            if kind == "inbox" and settings.social_mode == "live"
+            else ""
+        )
         with transaction() as db:
+            db.execute(
+                """UPDATE channel_sync_logs l JOIN social_accounts a ON a.social_account_id=l.social_account_id
+                LEFT JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
+                SET l.status='failed',l.error_code='CHANNEL_UNAVAILABLE',l.finished_at=UTC_TIMESTAMP()
+                WHERE l.kind=%s AND l.status IN ('pending','syncing')
+                AND (a.status<>'connected' OR t.social_account_id IS NULL OR t.expires_at<=UTC_TIMESTAMP())""",
+                (kind,),
+            )
             candidates = db.all(
-                f"SELECT social_account_id FROM social_accounts WHERE status='connected' AND ({column} IS NULL OR {column}<DATE_SUB(UTC_TIMESTAMP(),INTERVAL {interval})) ORDER BY social_account_id LIMIT 20"
+                f"SELECT a.social_account_id FROM social_accounts a JOIN social_account_tokens t ON t.social_account_id=a.social_account_id WHERE a.status='connected' AND (t.expires_at IS NULL OR t.expires_at>UTC_TIMESTAMP()) AND (a.{column} IS NULL OR a.{column}<DATE_SUB(UTC_TIMESTAMP(),INTERVAL {interval})){platform_filter} ORDER BY a.social_account_id LIMIT 20"
             )
         for candidate in candidates:
+            account_id = candidate["social_account_id"]
+            sync_id = None
             try:
                 with transaction() as db:
                     account = db.one(
                         f"SELECT a.*,p.code FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s AND a.status='connected' AND (a.{column} IS NULL OR a.{column}<DATE_SUB(UTC_TIMESTAMP(),INTERVAL {interval})) FOR UPDATE",
-                        (candidate["social_account_id"],),
+                        (account_id,),
                     )
                     if not account:
                         continue
+                    active = db.one(
+                        """SELECT sync_id,status,started_at FROM channel_sync_logs WHERE social_account_id=%s
+                        AND kind=%s AND status IN ('pending','syncing') ORDER BY sync_id DESC LIMIT 1 FOR UPDATE""",
+                        (account_id, kind),
+                    )
+                    if active and active["status"] == "syncing":
+                        if active["started_at"] > now() - timedelta(minutes=10):
+                            continue
+                        db.execute(
+                            "UPDATE channel_sync_logs SET status='failed',error_code='SYNC_INTERRUPTED',finished_at=UTC_TIMESTAMP() WHERE sync_id=%s",
+                            (active["sync_id"],),
+                        )
+                        active = None
+                    if active:
+                        sync_id = active["sync_id"]
+                        db.execute(
+                            "UPDATE channel_sync_logs SET status='syncing',started_at=UTC_TIMESTAMP() WHERE sync_id=%s",
+                            (sync_id,),
+                        )
+                    else:
+                        sync_id = db.insert(
+                            "channel_sync_logs",
+                            {
+                                "social_account_id": account_id,
+                                "kind": kind,
+                                "status": "syncing",
+                                "started_at": now(),
+                            },
+                        )
+                with transaction() as db:
+                    account = db.one(
+                        """SELECT a.*,p.code,t.expires_at FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
+                        LEFT JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
+                        WHERE a.social_account_id=%s FOR UPDATE""",
+                        (account_id,),
+                    )
+                    active = db.one(
+                        "SELECT status FROM channel_sync_logs WHERE sync_id=%s FOR UPDATE", (sync_id,)
+                    )
+                    if not active or active["status"] != "syncing":
+                        continue
                     db.execute(
                         f"UPDATE social_accounts SET {column}=UTC_TIMESTAMP() WHERE social_account_id=%s",
-                        (account["social_account_id"],),
+                        (account_id,),
                     )
-                    if kind == "inbox" and account["code"] != "facebook" and settings.social_mode == "live":
-                        continue
+                    status, error_code, count = "success", None, 0
                     try:
-                        (sync_account if kind == "metrics" else sync_inbox)(db, account)
+                        if account["status"] != "connected":
+                            raise ProviderError("CHANNEL_UNAVAILABLE")
+                        if account["expires_at"] and account["expires_at"] <= now():
+                            raise ProviderError("TOKEN_EXPIRED")
+                        demo = account["external_account_id"] == f"mock-{account['code']}"
+                        if demo != (settings.social_mode == "mock"):
+                            raise ProviderError("CHANNEL_MODE_MISMATCH")
+                        count = (sync_account if kind == "metrics" else sync_inbox)(db, account)
                     except ProviderError as error:
+                        status, error_code = "failed", error.code
                         db.execute(
                             "UPDATE social_accounts SET status_message=%s WHERE social_account_id=%s",
                             (error.code, account["social_account_id"]),
                         )
-                        if error.code == "TOKEN_EXPIRED":
+                        if error.code in TOKEN_STATUS:
                             db.execute(
-                                "UPDATE social_accounts SET status='expired' WHERE social_account_id=%s",
-                                (account["social_account_id"],),
+                                "UPDATE social_accounts SET status=%s WHERE social_account_id=%s",
+                                (TOKEN_STATUS[error.code], account["social_account_id"]),
                             )
                             notify_managers(
                                 db,
@@ -194,8 +260,20 @@ def sync_accounts():
                                 "social_account",
                                 account["social_account_id"],
                             )
+                    db.execute(
+                        """UPDATE channel_sync_logs SET status=%s,records_updated=%s,error_code=%s,
+                        finished_at=UTC_TIMESTAMP() WHERE sync_id=%s""",
+                        (status, count, error_code, sync_id),
+                    )
             except Exception as error:
                 logging.error("task=sync_%s code=%s", kind, type(error).__name__)
+                if sync_id is not None:
+                    with transaction() as db:
+                        db.execute(
+                            """UPDATE channel_sync_logs SET status='failed',error_code='SYNC_FAILED',
+                            finished_at=UTC_TIMESTAMP() WHERE sync_id=%s AND status='syncing'""",
+                            (sync_id,),
+                        )
 
 
 def sync_post_snapshots():

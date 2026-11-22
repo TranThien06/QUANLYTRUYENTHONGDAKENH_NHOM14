@@ -15,6 +15,12 @@ class Settings:
     frontend_url = os.getenv("FRONTEND_URL", app_url).rstrip("/")
     storage = Path(os.getenv("STORAGE_DIR", "storage")).resolve()
     social_mode = os.getenv("SOCIAL_MODE", "mock")
+    social_oauth_platforms = frozenset(
+        platform.strip()
+        for platform in os.getenv("SOCIAL_OAUTH_PLATFORMS", "facebook,instagram,tiktok").split(",")
+        if platform.strip()
+    )
+    social_oauth_require_live = os.getenv("SOCIAL_OAUTH_REQUIRE_LIVE", "false").lower() == "true"
     mail_mode = os.getenv("MAIL_MODE", "file")
     max_upload_bytes = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 

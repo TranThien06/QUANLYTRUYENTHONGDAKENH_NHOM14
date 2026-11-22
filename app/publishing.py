@@ -1,17 +1,14 @@
 """Quy tắc chung cho đăng ngay, lịch và worker. Khóa post trước variant/job."""
 
 from app.dependencies import membership
+from app.channel_policy import publishable_account
 from app.errors import check
 from app.events import change_status
 from app.modules.posts import load_post
 
 
 def validate_publish(db, post, variant):
-    account = db.one(
-        "SELECT a.*,p.code,p.max_caption_length FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s AND a.workspace_id=%s",
-        (variant["social_account_id"], post["workspace_id"]),
-    )
-    check(account and account["status"] == "connected", 409, "CHANNEL_UNAVAILABLE", "Kênh chưa kết nối")
+    account = publishable_account(db, post["workspace_id"], variant["social_account_id"])
     setting = db.one(
         "SELECT setting_value FROM workspace_settings WHERE workspace_id=%s AND setting_key='require_approval'",
         (post["workspace_id"],),
