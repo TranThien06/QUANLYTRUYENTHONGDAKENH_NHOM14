@@ -129,11 +129,10 @@ def reply(workspace_id: Id, conversation_id: Id, data: ReplyInput, request: Requ
         )
     try:
         with transaction() as db:
-            a = account(db, workspace_id, row["social_account_id"])
+            a = account(db, workspace_id, row["social_account_id"], lock=True)
             check(a["status"] == "connected", 409, "CHANNEL_UNAVAILABLE", "Kênh chưa kết nối")
             auth = credentials(db, a["social_account_id"])
-        result = reply_remote(a, row, data.content, auth["access_token"], request_id)
-        with transaction() as db:
+            result = reply_remote(a, row, data.content, auth["access_token"], request_id)
             message_id = db.insert(
                 "messages",
                 {

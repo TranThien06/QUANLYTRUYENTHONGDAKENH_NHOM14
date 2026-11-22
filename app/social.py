@@ -32,7 +32,17 @@ FACEBOOK_SCOPES = (
 )
 
 
-def call(url, *, method="GET", access_token=None, params=None, data=None, payload=None, publishing=False):
+def call(
+    url,
+    *,
+    method="GET",
+    access_token=None,
+    params=None,
+    data=None,
+    payload=None,
+    publishing=False,
+    oauth_refresh=False,
+):
     headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
     try:
         response = httpx.request(
@@ -49,6 +59,8 @@ def call(url, *, method="GET", access_token=None, params=None, data=None, payloa
     error = result.get("error")
     code = str(error.get("code")) if isinstance(error, dict) else str(error or "")
     if not response.is_success or (error and code != "ok"):
+        if oauth_refresh and code == "invalid_grant":
+            raise ProviderError("RECONNECT_REQUIRED")
         rate = response.status_code == 429 or code in ("4", "17", "32", "613")
         revoked = isinstance(error, dict) and code == "190" and error.get("error_subcode") == 458
         expired = response.status_code == 401 or code in ("190", "access_token_invalid")
@@ -319,9 +331,17 @@ def publish_remote(account, variant, media, caption, access_token, progress, sav
                 True,
             )
         external_id = result.get("post_id") or result.get("id")
+        url = result.get("permalink_url")
+        if external_id and not url:
+            try:
+                url = graph(external_id, access_token, {"fields": "permalink_url"}).get("permalink_url")
+            except ProviderError:
+                pass  # Bài đã đăng thành công dù không đọc được permalink.
+        if url and url.startswith("/") and not url.startswith("//"):
+            url = "https://www.facebook.com" + url
         return {
             "external_post_id": external_id,
-            "external_post_url": f"https://www.facebook.com/{external_id}",
+            "external_post_url": url or None,
         }
     if account["code"] == "instagram":
         check(len(media) == 1, 422, "UNSUPPORTED_FORMAT", "Live hiện hỗ trợ một ảnh hoặc một Reel")
@@ -346,12 +366,14 @@ def publish_remote(account, variant, media, caption, access_token, progress, sav
         published = graph(
             f"{account_id}/media_publish", access_token, {"creation_id": container_id}, "POST", True
         )
-        url = None
-        try:
-            url = graph(published["id"], access_token, {"fields": "permalink"}).get("permalink")
-        except ProviderError:
-            pass  # Đã có ID thành công: không gửi lại chỉ vì đọc permalink lỗi.
-        return {"external_post_id": published["id"], "external_post_url": url}
+        external_id = published.get("id")
+        url = published.get("permalink")
+        if external_id and not url:
+            try:
+                url = graph(external_id, access_token, {"fields": "permalink"}).get("permalink")
+            except ProviderError:
+                pass  # Đã có ID thành công: không gửi lại chỉ vì đọc permalink lỗi.
+        return {"external_post_id": external_id, "external_post_url": url or None}
     check(
         options.get("privacy_level"), 422, "PRIVACY_REQUIRED", "TikTok cần privacy_level do người dùng chọn"
     )
@@ -379,7 +401,24 @@ def publish_remote(account, variant, media, caption, access_token, progress, sav
     ids = status.get("publicaly_available_post_id") or []
     if status.get("status") != "PUBLISH_COMPLETE" or not ids:
         return {"pending": True}
-    return {"external_post_id": ids[0], "external_post_url": None}
+    external_id = str(ids[0])
+    url = None
+    try:
+        item = query_tiktok_video(access_token, external_id, "id,share_url")
+        if item:
+            url = item.get("share_url")
+    except ProviderError:
+        pass  # video.list có thể chưa được cấp dù video.publish đã thành công.
+    return {"external_post_id": external_id, "external_post_url": url or None}
+
+
+def query_tiktok_video(access_token, external_id, fields):
+    result = tiktok(
+        f"video/query/?fields={fields}",
+        access_token,
+        {"filters": {"video_ids": [external_id]}},
+    )
+    return next((p for p in result.get("data", {}).get("videos", []) if p["id"] == external_id), None)
 
 
 def verify_remote_post(account, variant, external_id, access_token):
@@ -413,12 +452,7 @@ def verify_remote_post(account, variant, external_id, access_token):
         return {"url": item.get("permalink"), "published_at": utc(item["timestamp"])}
     from datetime import datetime, timezone
 
-    result = tiktok(
-        "video/query/?fields=id,create_time,share_url",
-        access_token,
-        {"filters": {"video_ids": [external_id]}},
-    )
-    item = next((p for p in result.get("data", {}).get("videos", []) if p["id"] == external_id), None)
+    item = query_tiktok_video(access_token, external_id, "id,create_time,share_url")
     check(item, 422, "POST_NOT_VERIFIED", "Không tìm thấy video trong tài khoản")
     return {
         "url": item.get("share_url"),
@@ -429,18 +463,31 @@ def verify_remote_post(account, variant, external_id, access_token):
 def refresh_remote(account, credentials):
     if settings.social_mode == "mock":
         return {"access_token": "mock-refreshed", "refresh_token": "mock-refresh", "expires_in": 86400}
-    if account["code"] == "tiktok":
-        return call(
-            "https://open.tiktokapis.com/v2/oauth/token/",
-            method="POST",
-            data={
-                "client_key": os.getenv("TIKTOK_CLIENT_KEY"),
-                "client_secret": os.getenv("TIKTOK_CLIENT_SECRET"),
-                "grant_type": "refresh_token",
-                "refresh_token": credentials["refresh_token"],
-            },
+    if account["code"] != "tiktok" or not credentials["refresh_token"]:
+        raise ProviderError("RECONNECT_REQUIRED")
+    result = call(
+        "https://open.tiktokapis.com/v2/oauth/token/",
+        method="POST",
+        oauth_refresh=True,
+        data={
+            "client_key": os.getenv("TIKTOK_CLIENT_KEY"),
+            "client_secret": os.getenv("TIKTOK_CLIENT_SECRET"),
+            "grant_type": "refresh_token",
+            "refresh_token": credentials["refresh_token"],
+        },
+    )
+    lifetime = result.get("expires_in")
+    if (
+        result.get("open_id") != account["external_account_id"]
+        or not all(
+            isinstance(result.get(key), str) and result[key].strip()
+            for key in ("access_token", "refresh_token")
         )
-    raise ProviderError("RECONNECT_REQUIRED")
+        or type(lifetime) is not int
+        or not 0 < lifetime <= 2**31 - 1
+    ):
+        raise ProviderError("INVALID_REFRESH_RESPONSE")
+    return result
 
 
 def account_metrics(account, access_token):

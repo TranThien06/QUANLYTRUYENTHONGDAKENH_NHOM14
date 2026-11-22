@@ -4,11 +4,11 @@ from pydantic import Field
 from app.common import Input, Id, Pagination, now, utc, ok
 from app.db import json_value, transaction
 from app.dependencies import workspace
-from app.errors import check
+from app.errors import ApiError, check
 from app.events import audit, change_status
 from app.modules.posts import locked_post
 from app.modules.channels import account, credentials
-from app.publishing import validate_publish, enqueue, variant_context, aggregate
+from app.publishing import validate_approval, validate_publish, enqueue, variant_context, aggregate
 from app.social import verify_remote_post
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["Đăng bài và lịch"])
@@ -27,8 +27,61 @@ class ReconcileInput(Input):
     external_post_id: str = Field(min_length=1, max_length=100)
 
 
+class PublishInput(Input):
+    variant_ids: list[Id] | None = Field(None, min_length=1, max_length=30)
+
+
+def publish_variant(db, post, variant, user_id):
+    variant_id = variant["variant_id"]
+    check(
+        not db.one(
+            "SELECT 1 FROM schedules WHERE variant_id=%s AND status IN ('pending','queued')",
+            (variant_id,),
+        ),
+        409,
+        "ACTIVE_SCHEDULE",
+        "Hủy lịch trước khi đăng ngay",
+    )
+    check(
+        not db.one(
+            "SELECT 1 FROM publish_jobs WHERE variant_id=%s AND needs_reconciliation=1", (variant_id,)
+        ),
+        409,
+        "RECONCILIATION_REQUIRED",
+        "Cần đối soát kết quả trên nền tảng trước",
+    )
+    if variant["status"] != "publishing":
+        try:
+            validate_publish(db, post, variant, require_approval=False)
+        except ApiError as error:
+            last = db.one(
+                "SELECT COALESCE(MAX(attempt_no),0) AS n FROM publish_jobs WHERE variant_id=%s",
+                (variant_id,),
+            )
+            job_id = db.insert(
+                "publish_jobs",
+                {
+                    "variant_id": variant_id,
+                    "requested_by": user_id,
+                    "attempt_no": last["n"] + 1,
+                    "status": "failed",
+                    "error_code": error.code,
+                    "error_message": error.message,
+                    "finished_at": now(),
+                },
+            )
+            db.execute("UPDATE post_variants SET status='failed' WHERE variant_id=%s", (variant_id,))
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "error_code": error.code,
+                "error_message": error.message,
+            }
+    return {**enqueue(db, variant, user_id=user_id), "status": "publishing"}
+
+
 @router.post("/posts/{post_id}/publish", status_code=202, dependencies=[Depends(workspace("post.publish"))])
-def publish(workspace_id: Id, post_id: Id, request: Request):
+def publish(workspace_id: Id, post_id: Id, request: Request, data: PublishInput | None = None):
     with transaction() as db:
         post = locked_post(db, request, post_id, "post.publish")
         check(
@@ -40,25 +93,47 @@ def publish(workspace_id: Id, post_id: Id, request: Request):
         variants = db.all(
             "SELECT * FROM post_variants WHERE post_id=%s ORDER BY variant_id FOR UPDATE", (post_id,)
         )
-        jobs = []
-        for variant in variants:
-            if variant["status"] == "published":
-                continue
-            validate_publish(db, post, variant)
+        if data and data.variant_ids is not None:
+            selected = {int(v) for v in data.variant_ids}
             check(
-                not db.one(
-                    "SELECT 1 FROM schedules WHERE variant_id=%s AND status IN ('pending','queued')",
-                    (variant["variant_id"],),
-                ),
-                409,
-                "ACTIVE_SCHEDULE",
-                "Hủy lịch trước khi đăng ngay",
+                len(selected) == len(data.variant_ids) and selected <= {v["variant_id"] for v in variants},
+                422,
+                "INVALID_VARIANTS",
+                "Chọn các kênh khác nhau thuộc bài đăng",
             )
-            jobs.append(enqueue(db, variant, user_id=request.state.user["user_id"]))
-        check(jobs, 409, "ALREADY_PUBLISHED", "Mọi kênh đã đăng")
-        change_status(db, post, "publishing", request.state.user["user_id"])
-        audit(db, request, "post.publish", "post", post_id)
-    return ok({"jobs": jobs})
+            variants = [v for v in variants if v["variant_id"] in selected]
+        else:
+            check(
+                any(v["status"] != "published" for v in variants),
+                409,
+                "ALREADY_PUBLISHED",
+                "Mọi kênh đã đăng",
+            )
+        validate_approval(db, post)
+        user_id = request.state.user["user_id"]
+        jobs, results = [], []
+        for variant in variants:
+            try:
+                outcome = (
+                    {"status": "published"}
+                    if variant["status"] == "published"
+                    else publish_variant(db, post, variant, user_id)
+                )
+            except ApiError as error:
+                outcome = {"status": "failed", "error_code": error.code, "error_message": error.message}
+            if outcome["status"] == "publishing":
+                jobs.append({"job_id": outcome["job_id"]})
+            results.append(
+                {
+                    "variant_id": variant["variant_id"],
+                    "social_account_id": variant["social_account_id"],
+                    **outcome,
+                }
+            )
+        if jobs:
+            change_status(db, post, "publishing", user_id)
+        audit(db, request, "post.publish", "post", post_id, new={"results": results})
+    return ok({"jobs": jobs, "results": results})
 
 
 @router.post(

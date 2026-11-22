@@ -14,13 +14,15 @@ function clearSession() {
   state.generation++; state.token = null; state.user = null; state.workspaces = []; sessionStorage.removeItem('mintspace-token');
   sessionStorage.removeItem('orbitspace-oauth-pending'); sessionStorage.removeItem('orbitspace-oauth-result');
   $('#account-name').textContent = 'Đăng nhập'; $('#avatar').textContent = 'O';
-  $('#avatar').hidden = true; $('#account-chevron').hidden = true; $('#register-button').hidden = false;
-  $('#channels-dialog').close(); $('#workspace-dialog').close(); $('#account-dialog').close(); $('#members-dialog').close(); render();
+  $('#workspace-dialog').close(); $('#account-dialog').close(); $('#members-dialog').close(); $('#publish-dialog').close(); render();
   message('Đăng nhập để xem workspace của bạn và bắt đầu cộng tác.', true);
 }
 async function api(path, options = {}) {
   let response;
-  try { response = await fetch('/api/v1' + path, { ...options, headers: { 'Content-Type': 'application/json', ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}), ...options.headers } }); }
+  try { response = await fetch('/api/v1' + path, { ...options, headers: {
+    ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}), ...options.headers,
+  } }); }
   catch { throw new Error('Không kết nối được máy chủ. Vui lòng kiểm tra kết nối và thử lại.'); }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -70,8 +72,7 @@ function resetErrors() {
 }
 function formError(text) { $('#form-error').textContent = text; $('#form-error').hidden = false; }
 function prepareForm(isNew) {
-  $('#posts-button').hidden = true;
-  $('#channels-button').hidden = true; $('#members-button').hidden = true; resetErrors(); form.reset(); state.editing = null; state.canEdit = false;
+  $('#members-button').hidden = true; $('#posts-button').hidden = true; resetErrors(); form.reset(); state.editing = null; state.canEdit = false;
   $('#workspace-fields').disabled = true; $('#save-button').disabled = true;
   $('#save-button').hidden = false; $('#save-button').textContent = isNew ? 'Tạo workspace' : 'Lưu thay đổi';
   $('#dialog-title').textContent = isNew ? 'Tạo workspace mới' : 'Thông tin workspace';
@@ -95,9 +96,9 @@ async function openWorkspace(id) {
       if (key === 'timezone' && !Array.from(form.elements.timezone.options).some(o => o.value === ws.timezone)) form.elements.timezone.add(new Option(ws.timezone, ws.timezone));
       form.elements[key].value = ws[key] || '';
     }
-    $('#channels-button').hidden = false; $('#members-button').hidden = false; state.canEdit = access.permissions.includes('workspace.manage');
+    $('#members-button').hidden = false; state.canEdit = access.permissions.includes('workspace.manage');
     $('#posts-button').hidden = false;
-    $('#posts-button').onclick = () => openPosts(ws, access.permissions);
+    $('#posts-button').onclick = () => openPublishDialog(id, access.permissions);
     $('#workspace-fields').disabled = !state.canEdit; $('#save-button').disabled = !state.canEdit; $('#save-button').hidden = !state.canEdit;
     $('#permission-notice').hidden = false; $('#permission-notice').textContent = state.canEdit ? `Vai trò: ${roles[access.role] || access.role}. Bạn có quyền cập nhật workspace này.` : `Vai trò: ${roles[access.role] || access.role}. Bạn chỉ có quyền xem thông tin workspace.`;
     $('#save-hint').textContent = state.canEdit ? 'Thông tin có dấu * là bắt buộc' : 'Thông tin đang ở chế độ chỉ xem';

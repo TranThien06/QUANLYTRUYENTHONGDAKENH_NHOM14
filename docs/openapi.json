@@ -2917,6 +2917,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PublishInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Data"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -5592,7 +5609,8 @@
                 "type": "null"
               }
             ],
-            "title": "Folder Id"
+            "title": "Folder Id",
+            "description": "Để trống để tải vào thư viện gốc. Nếu điền, dùng ID số của thư mục."
           }
         },
         "type": "object",
@@ -6100,6 +6118,29 @@
           "full_name"
         ],
         "title": "ProfileInput"
+      },
+      "PublishInput": {
+        "properties": {
+          "variant_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 30,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PublishInput"
       },
       "ReadInput": {
         "properties": {

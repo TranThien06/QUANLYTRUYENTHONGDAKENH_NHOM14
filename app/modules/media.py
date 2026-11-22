@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import Field
-from app.common import Input, Id, Pagination, ok
+from app.common import Input, Id, Pagination, ok, valid_id
 from app.config import settings
 from app.db import transaction
 from app.dependencies import workspace
@@ -259,12 +259,18 @@ def save_upload(db, workspace_id, user_id, file, folder_id, request):
     "/workspaces/{workspace_id}/media", status_code=201, dependencies=[Depends(workspace("media.manage"))]
 )
 def upload(
-    workspace_id: Id, request: Request, file: UploadFile = File(...), folder_id: str | None = Form(None)
+    workspace_id: Id,
+    request: Request,
+    file: UploadFile = File(...),
+    folder_id: str | None = Form(
+        None, description="Để trống để tải vào thư viện gốc. Nếu điền, dùng ID số của thư mục."
+    ),
 ):
     if folder_id:
-        from app.common import valid_id
-
-        folder_id = valid_id(folder_id)
+        try:
+            folder_id = valid_id(folder_id)
+        except ValueError:
+            check(False, 422, "INVALID_FOLDER_ID", "Mã thư mục phải là số nguyên dương hoặc để trống")
     with transaction() as db:
         return ok(save_upload(db, workspace_id, request.state.user["user_id"], file, folder_id, request))
 

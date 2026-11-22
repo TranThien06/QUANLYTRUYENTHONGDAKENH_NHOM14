@@ -32,7 +32,8 @@ class SelectionInput(Input):
 
 def account(db, workspace_id, account_id, lock=False):
     row = db.one(
-        "SELECT a.*,p.code FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.workspace_id=%s AND a.social_account_id=%s"
+        "SELECT a.*,(SELECT p.code FROM platforms p WHERE p.platform_id=a.platform_id) AS code "
+        "FROM social_accounts a WHERE a.workspace_id=%s AND a.social_account_id=%s"
         + (" FOR UPDATE" if lock else ""),
         (workspace_id, account_id),
     )
@@ -275,8 +276,8 @@ def complete_selection(workspace_id: Id, data: SelectionInput, request: Request)
             )
             expires = now() + timedelta(seconds=item["expires_in"]) if item.get("expires_in") else None
             db.execute(
-                """INSERT INTO social_account_tokens(social_account_id,access_token_enc,refresh_token_enc,expires_at,scopes,token_type) VALUES (%s,%s,%s,%s,%s,%s)
-                ON DUPLICATE KEY UPDATE access_token_enc=VALUES(access_token_enc),refresh_token_enc=VALUES(refresh_token_enc),expires_at=VALUES(expires_at),scopes=VALUES(scopes),token_type=VALUES(token_type),last_refreshed_at=NULL,refresh_fail_count=0""",
+                """INSERT INTO social_account_tokens(social_account_id,access_token_enc,refresh_token_enc,expires_at) VALUES (%s,%s,%s,%s)
+                ON DUPLICATE KEY UPDATE access_token_enc=VALUES(access_token_enc),refresh_token_enc=VALUES(refresh_token_enc),expires_at=VALUES(expires_at),last_refreshed_at=NULL,refresh_fail_count=0""",
                 (
                     saved["social_account_id"],
                     encrypt(item["access_token"]),
@@ -414,26 +415,34 @@ def disconnect(workspace_id: Id, account_id: Id, request: Request):
             "SELECT DISTINCT p.post_id FROM posts p JOIN post_variants v ON v.post_id=p.post_id WHERE v.workspace_id=%s AND v.social_account_id=%s ORDER BY p.post_id",
             (workspace_id, account_id),
         )
-        for p in posts:
-            db.one("SELECT post_id FROM posts WHERE post_id=%s FOR UPDATE", (p["post_id"],))
-        account(db, workspace_id, account_id, True)
+        posts = [
+            db.one("SELECT * FROM posts WHERE post_id=%s AND workspace_id=%s FOR UPDATE", (p["post_id"], workspace_id))
+            for p in posts
+        ]
+        membership(db, workspace_id, request.state.user["user_id"], "channel.manage")
+        channel = account(db, workspace_id, account_id, True)
+        if channel["status"] == "disconnected":
+            return ok({"status": "disconnected"})
         check(
             not db.one(
-                "SELECT 1 FROM publish_jobs j JOIN post_variants v ON v.variant_id=j.variant_id WHERE v.social_account_id=%s AND j.status='running'",
-                (account_id,),
+                "SELECT 1 FROM publish_jobs j JOIN post_variants v ON v.variant_id=j.variant_id WHERE v.workspace_id=%s AND v.social_account_id=%s AND j.status='running' LIMIT 1 FOR UPDATE",
+                (workspace_id, account_id),
             ),
             409,
             "PUBLISH_STARTED",
             "Đang gửi bài, thử lại sau",
         )
+        affected_posts = {
+            row["post_id"]
+            for row in db.all(
+                "SELECT post_id FROM post_variants WHERE workspace_id=%s AND social_account_id=%s "
+                "AND status IN ('draft','scheduled','publishing') FOR UPDATE",
+                (workspace_id, account_id),
+            )
+        }
         db.execute("DELETE FROM social_account_tokens WHERE social_account_id=%s", (account_id,))
         db.execute(
-            """UPDATE channel_sync_logs SET status='failed', error_code='CHANNEL_DISCONNECTED',
-            finished_at=UTC_TIMESTAMP() WHERE social_account_id=%s AND status IN ('pending','syncing')""",
-            (account_id,),
-        )
-        db.execute(
-            "UPDATE social_accounts SET status='disconnected',disconnected_at=UTC_TIMESTAMP() WHERE social_account_id=%s",
+            "UPDATE social_accounts SET status='disconnected',status_message=NULL,disconnected_at=UTC_TIMESTAMP() WHERE social_account_id=%s",
             (account_id,),
         )
         db.execute(
@@ -448,11 +457,12 @@ def disconnect(workspace_id: Id, account_id: Id, request: Request):
             "UPDATE post_variants SET status='cancelled' WHERE social_account_id=%s AND status IN ('draft','scheduled','publishing')",
             (account_id,),
         )
-        for item in posts:
-            post = db.one("SELECT * FROM posts WHERE post_id=%s", (item["post_id"],))
+        for post in posts:
+            if not post or post["post_id"] not in affected_posts:
+                continue
             states = [
                 v["status"]
-                for v in db.all("SELECT status FROM post_variants WHERE post_id=%s", (post["post_id"],))
+                for v in db.all("SELECT status FROM post_variants WHERE post_id=%s FOR UPDATE", (post["post_id"],))
             ]
             if all(s == "cancelled" for s in states):
                 change_status(db, post, "cancelled", request.state.user["user_id"], "Ngắt kết nối kênh")

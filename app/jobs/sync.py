@@ -11,63 +11,104 @@ from app.social import refresh_remote, account_metrics, post_metrics, inbox_remo
 
 def refresh_tokens():
     with transaction() as db:
-        candidates = db.all("""SELECT a.social_account_id FROM social_accounts a JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
-            WHERE a.status='connected' AND t.expires_at<DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR)
-            AND (t.last_refreshed_at IS NULL OR t.last_refreshed_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE)) LIMIT 20""")
+        candidates = db.all(
+            """SELECT a.social_account_id FROM social_accounts a JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
+            JOIN platforms p ON p.platform_id=a.platform_id
+            WHERE (%s='mock' OR p.code='tiktok' OR t.expires_at<=UTC_TIMESTAMP())
+            AND (a.status='connected' OR (a.status='expired' AND a.status_message IN ('TOKEN_REFRESH_PENDING','TOKEN_EXPIRED')))
+            AND t.expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 MINUTE)
+            AND (t.last_refreshed_at IS NULL OR t.last_refreshed_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE) OR (a.status='connected' AND t.expires_at<=UTC_TIMESTAMP()))
+            ORDER BY t.last_refreshed_at,t.expires_at LIMIT 20""",
+            (settings.social_mode,),
+        )
     for candidate in candidates:
-        with transaction() as db:
-            account = db.one(
-                "SELECT a.*,p.code FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s FOR UPDATE",
-                (candidate["social_account_id"],),
+        account_id = candidate["social_account_id"]
+        try:
+            refresh_account_token(account_id)
+        except Exception as error:
+            logging.error("task=token_refresh account_id=%s code=%s", account_id, type(error).__name__)
+
+
+def refresh_account_token(account_id):
+    with transaction() as db:
+        account = db.one(
+            "SELECT a.*,p.code FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s FOR UPDATE",
+            (account_id,),
+        )
+        if not account or not (
+            account["status"] == "connected"
+            or (
+                account["status"] == "expired"
+                and account["status_message"] in ("TOKEN_REFRESH_PENDING", "TOKEN_EXPIRED")
             )
-            current = db.one(
-                "SELECT * FROM social_account_tokens WHERE social_account_id=%s FOR UPDATE",
-                (account["social_account_id"],),
+        ):
+            return
+        current = db.one(
+            "SELECT * FROM social_account_tokens WHERE social_account_id=%s FOR UPDATE",
+            (account["social_account_id"],),
+        )
+        if (
+            not current
+            or not current["expires_at"]
+            or current["expires_at"] > now() + timedelta(minutes=30)
+            or (
+                current["last_refreshed_at"]
+                and (account["status"] == "expired" or current["expires_at"] > now())
+                and current["last_refreshed_at"] > now() - timedelta(minutes=10)
             )
-            if (
-                not current
-                or account["status"] != "connected"
-                or (
-                    current["last_refreshed_at"]
-                    and current["last_refreshed_at"] > now() - timedelta(minutes=10)
-                )
-            ):
-                continue
+        ):
+            return
+        if settings.social_mode == "live" and account["code"] != "tiktok" and current["expires_at"] > now():
+            return
+        db.execute(
+            "UPDATE social_account_tokens SET last_refreshed_at=UTC_TIMESTAMP() WHERE social_account_id=%s",
+            (account["social_account_id"],),
+        )
+        try:
+            auth = credentials(db, account["social_account_id"])
+            started_at = now()
+            fresh = refresh_remote(account, auth)
             db.execute(
-                "UPDATE social_account_tokens SET last_refreshed_at=UTC_TIMESTAMP() WHERE social_account_id=%s",
+                "UPDATE social_account_tokens SET access_token_enc=%s,refresh_token_enc=%s,expires_at=%s,refresh_fail_count=0 WHERE social_account_id=%s",
+                (
+                    encrypt(fresh["access_token"]),
+                    encrypt(fresh["refresh_token"]),
+                    started_at + timedelta(seconds=fresh["expires_in"]),
+                    account["social_account_id"],
+                ),
+            )
+        except ProviderError as error:
+            logging.warning("task=token_refresh account_id=%s code=%s", account_id, error.code)
+            db.execute(
+                "UPDATE social_account_tokens SET refresh_fail_count=refresh_fail_count+1 WHERE social_account_id=%s",
                 (account["social_account_id"],),
             )
-            try:
-                auth = credentials(db, account["social_account_id"])
-                fresh = refresh_remote(account, auth)
+            if error.code == "RECONNECT_REQUIRED":
                 db.execute(
-                    "UPDATE social_account_tokens SET access_token_enc=%s,refresh_token_enc=%s,expires_at=%s,scopes=COALESCE(%s,scopes),refresh_fail_count=0 WHERE social_account_id=%s",
-                    (
-                        encrypt(fresh["access_token"]),
-                        encrypt(fresh.get("refresh_token") or auth["refresh_token"]),
-                        now() + timedelta(seconds=fresh["expires_in"]),
-                        fresh.get("scope"),
-                        account["social_account_id"],
-                    ),
-                )
-            except ProviderError as error:
-                db.execute(
-                    "UPDATE social_account_tokens SET refresh_fail_count=refresh_fail_count+1 WHERE social_account_id=%s",
+                    "UPDATE social_accounts SET status='expired',status_message='RECONNECT_REQUIRED' WHERE social_account_id=%s",
                     (account["social_account_id"],),
                 )
-                if current["refresh_fail_count"] >= 2 or error.code == "RECONNECT_REQUIRED":
-                    db.execute(
-                        "UPDATE social_accounts SET status='expired',status_message='RECONNECT_REQUIRED' WHERE social_account_id=%s",
-                        (account["social_account_id"],),
-                    )
-                    notify_managers(
-                        db,
-                        account["workspace_id"],
-                        "token_expired",
-                        "Cần kết nối lại kênh",
-                        "social_account",
-                        account["social_account_id"],
-                    )
+                notify_managers(
+                    db,
+                    account["workspace_id"],
+                    "token_expired",
+                    "Cần kết nối lại kênh",
+                    "social_account",
+                    account["social_account_id"],
+                )
+
+            elif account["status"] == "connected" and current["expires_at"] <= now():
+                db.execute(
+                    "UPDATE social_accounts SET status='expired',status_message='TOKEN_REFRESH_PENDING' WHERE social_account_id=%s",
+                    (account_id,),
+                )
+            return
+
+        if account["status"] == "expired":
+            db.execute(
+                "UPDATE social_accounts SET status='connected',status_message=NULL WHERE social_account_id=%s",
+                (account_id,),
+            )
 
 
 def sync_account(db, account):
@@ -280,26 +321,33 @@ def sync_post_snapshots():
     for hours in (1, 24, 168):
         with transaction() as db:
             candidates = db.all(
-                "SELECT v.variant_id FROM post_variants v WHERE v.status='published' AND v.published_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL %s HOUR) AND NOT EXISTS (SELECT 1 FROM metric_sync_points s WHERE s.variant_id=v.variant_id AND s.checkpoint_hours=%s) LIMIT 20",
+                "SELECT v.variant_id,v.social_account_id FROM post_variants v WHERE v.status='published' AND v.published_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL %s HOUR) AND NOT EXISTS (SELECT 1 FROM metric_sync_points s WHERE s.variant_id=v.variant_id AND s.checkpoint_hours=%s) LIMIT 20",
                 (hours, hours),
             )
         for candidate in candidates:
             try:
                 with transaction() as db:
+                    account = db.one(
+                        "SELECT a.*,(SELECT p.code FROM platforms p WHERE p.platform_id=a.platform_id) AS code "
+                        "FROM social_accounts a WHERE a.social_account_id=%s FOR UPDATE",
+                        (candidate["social_account_id"],),
+                    )
+                    if not account or account["status"] != "connected":
+                        continue
                     variant = db.one(
                         "SELECT * FROM post_variants WHERE variant_id=%s FOR UPDATE",
                         (candidate["variant_id"],),
                     )
+                    if (
+                        not variant
+                        or variant["status"] != "published"
+                        or variant["social_account_id"] != account["social_account_id"]
+                    ):
+                        continue
                     if db.one(
                         "SELECT 1 FROM metric_sync_points WHERE variant_id=%s AND checkpoint_hours=%s",
                         (variant["variant_id"], hours),
                     ):
-                        continue
-                    account = db.one(
-                        "SELECT a.*,p.code FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id WHERE a.social_account_id=%s",
-                        (variant["social_account_id"],),
-                    )
-                    if account["status"] != "connected":
                         continue
                     metrics = post_metrics(
                         account, variant, credentials(db, account["social_account_id"])["access_token"]

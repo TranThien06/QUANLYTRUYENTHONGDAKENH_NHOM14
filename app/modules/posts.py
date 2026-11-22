@@ -126,7 +126,16 @@ def save_content(db, workspace_id, post_id, data):
 def post_detail(db, workspace_id, post_id):
     post = load_post(db, workspace_id, post_id)
     post["variants"] = db.all(
-        "SELECT v.*,a.account_name,p.code platform FROM post_variants v JOIN social_accounts a ON a.social_account_id=v.social_account_id JOIN platforms p ON p.platform_id=a.platform_id WHERE v.post_id=%s ORDER BY v.variant_id",
+        """SELECT v.*,a.account_name,p.code AS platform,
+                  j.error_code,j.error_message,j.needs_reconciliation
+           FROM post_variants v
+           JOIN social_accounts a ON a.social_account_id=v.social_account_id
+           JOIN platforms p ON p.platform_id=a.platform_id
+           LEFT JOIN publish_jobs j ON v.status='failed' AND j.job_id=(
+               SELECT attempt.job_id FROM publish_jobs attempt
+               WHERE attempt.variant_id=v.variant_id ORDER BY attempt.attempt_no DESC LIMIT 1
+           )
+           WHERE v.post_id=%s ORDER BY v.variant_id""",
         (post_id,),
     )
     post["media"] = db.all(
