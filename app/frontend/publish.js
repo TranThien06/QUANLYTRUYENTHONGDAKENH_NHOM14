@@ -102,6 +102,23 @@ async function refreshPublication() {
         ? result : variant;
       if (error?.error_message) status.textContent += ' — ' + error.error_message + ' (' + error.error_code + ')';
       row.append(label, status);
+      if (variant.status === 'published') {
+        const details = document.createElement('div');
+        if (variant.external_post_id) {
+          details.append(element('small', '', 'Mã bài: ' + variant.external_post_id));
+        }
+        if (/^https?:\/\//i.test(variant.external_post_url || '')) {
+          const link = element('a', '', 'Mở bài đã đăng');
+          link.href = variant.external_post_url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.setAttribute('aria-label', 'Mở bài đã đăng trên ' + variant.account_name + ' · ' + variant.platform);
+          details.append(document.createTextNode(' '), link);
+        } else {
+          details.append(document.createTextNode(' '), element('small', '', 'Chưa có liên kết từ nền tảng'));
+        }
+        row.append(details);
+      }
       publishChannels.append(row);
     }
     const pending = post.variants.some(variant => variant.status === 'publishing');
