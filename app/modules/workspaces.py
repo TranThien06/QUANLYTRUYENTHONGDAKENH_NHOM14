@@ -1,6 +1,5 @@
 from datetime import timedelta
 from typing import Literal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Request
 from pydantic import Field, field_validator
 from app.common import Input, Id, Pagination, now, ok
@@ -14,13 +13,14 @@ from app.modules.auth import EmailInput, TokenInput, ConfirmInput, queue_mail
 
 router = APIRouter(tags=["Workspace"])
 Role = Literal["admin", "manager", "editor", "approver", "viewer"]
+WorkspaceTimezone = Literal["Asia/Ho_Chi_Minh"]
 
 
 class WorkspaceInput(Input):
     name: str = Field(min_length=1, max_length=150)
     slug: str = Field(max_length=100, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     logo_url: str | None = Field(None, max_length=500)
-    timezone: str = "Asia/Ho_Chi_Minh"
+    timezone: WorkspaceTimezone = "Asia/Ho_Chi_Minh"
 
     @field_validator("name", mode="before")
     @classmethod
@@ -32,7 +32,7 @@ class WorkspaceUpdate(Input):
     name: str | None = Field(None, min_length=1, max_length=150)
     slug: str | None = Field(None, max_length=100, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     logo_url: str | None = Field(None, max_length=500)
-    timezone: str | None = Field(None, max_length=64)
+    timezone: WorkspaceTimezone | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -56,13 +56,6 @@ class OwnerInput(Input):
 class SettingsInput(Input):
     require_approval: bool | None = None
     allow_self_approval: bool | None = None
-
-
-def valid_timezone(value):
-    try:
-        ZoneInfo(value)
-    except (ZoneInfoNotFoundError, TypeError):
-        check(False, 422, "INVALID_TIMEZONE", "Múi giờ không hợp lệ")
 
 
 def role_by_code(db, code):
@@ -102,7 +95,6 @@ def list_workspaces(paging: Pagination = Depends(), user=Depends(current_user)):
 
 @router.post("/workspaces", status_code=201)
 def create_workspace(data: WorkspaceInput, request: Request, user=Depends(current_user)):
-    valid_timezone(data.timezone)
     with transaction() as db:
         ws_id = db.insert("workspaces", {**data.model_dump(), "owner_id": user["user_id"]})
         role = role_by_code(db, "admin")
@@ -133,7 +125,7 @@ def workspace_detail(workspace_id: Id):
 
 @router.get("/workspaces/{workspace_id}/access")
 @router.get("/workspaces/{workspace_id}/me/permissions")
-def my_workspace_permissions(workspace_id: Id, member=Depends(workspace())):
+def my_workspace_permissions(workspace_id: Id, member=Depends(workspace()), include_workspace: bool = False):
     with transaction() as db:
         rows = db.all(
             """SELECT p.code FROM role_permissions rp
@@ -141,7 +133,15 @@ def my_workspace_permissions(workspace_id: Id, member=Depends(workspace())):
             WHERE rp.role_id=%s ORDER BY p.code""",
             (member["role_id"],),
         )
-    return ok({"role": member["role_code"], "permissions": [row["code"] for row in rows]})
+        result = {"role": member["role_code"], "permissions": [row["code"] for row in rows]}
+        if include_workspace:
+            details = db.one(
+                "SELECT * FROM workspaces WHERE workspace_id=%s AND deleted_at IS NULL",
+                (workspace_id,),
+            )
+            check(details, 404, "WORKSPACE_NOT_FOUND", "Không tìm thấy workspace")
+            result["workspace"] = details
+    return ok(result)
 
 
 @router.patch("/workspaces/{workspace_id}", dependencies=[Depends(workspace("workspace.manage"))])
@@ -153,8 +153,6 @@ def update_workspace(workspace_id: Id, data: WorkspaceUpdate, request: Request):
         "INVALID_INPUT",
         "Không được để trống tên/slug/múi giờ",
     )
-    if "timezone" in values:
-        valid_timezone(values["timezone"])
     with transaction() as db:
         old, _ = lock_workspace(db, request, "workspace.manage")
         for key, value in values.items():

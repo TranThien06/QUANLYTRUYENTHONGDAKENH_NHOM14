@@ -33,6 +33,9 @@ def test_viewer_can_read_permissions_but_cannot_update(monkeypatch):
                 return {"role_id": "5", "role_code": "viewer"}
             if "role_permissions" in sql:
                 return None
+            if "FROM workspaces WHERE" in sql:
+                assert args == ("1",)
+                return {"workspace_id": 1, "name": "Team"}
             raise AssertionError("Unauthorized request reached a write query")
 
         def all(self, sql, args=()):
@@ -53,4 +56,11 @@ def test_viewer_can_read_permissions_but_cannot_update(monkeypatch):
     result = client.get("/api/v1/workspaces/1/access")
     assert result.status_code == 200
     assert result.json()["data"] == {"role": "viewer", "permissions": ["workspace.view"]}
+    result = client.get("/api/v1/workspaces/1/access?include_workspace=true")
+    assert result.status_code == 200
+    assert result.json()["data"] == {
+        "role": "viewer",
+        "permissions": ["workspace.view"],
+        "workspace": {"workspace_id": "1", "name": "Team"},
+    }
     assert client.patch("/api/v1/workspaces/1", json={"name": "Changed"}).status_code == 403

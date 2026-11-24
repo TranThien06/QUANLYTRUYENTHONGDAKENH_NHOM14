@@ -122,10 +122,13 @@ def recover_expired_jobs():
             )
 
 
-def claim_one():
+def claim_one(job_id=None):
     with transaction() as db:
+        job_filter = " AND job_id=%s" if job_id is not None else ""
         candidate = db.one(
-            "SELECT * FROM publish_jobs WHERE status='queued' AND (next_retry_at IS NULL OR next_retry_at<=UTC_TIMESTAMP()) ORDER BY job_id LIMIT 1"
+            "SELECT * FROM publish_jobs WHERE status='queued' AND (next_retry_at IS NULL OR next_retry_at<=UTC_TIMESTAMP())"
+            + job_filter + " ORDER BY job_id LIMIT 1",
+            (job_id,) if job_id is not None else (),
         )
         if not candidate:
             return None
@@ -144,8 +147,8 @@ def claim_one():
         return job, post, variant, claim
 
 
-def publish_one():
-    claimed = claim_one()
+def publish_one(job_id=None):
+    claimed = claim_one(job_id)
     if not claimed:
         return False
     job, post, variant, claim = claimed

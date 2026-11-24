@@ -8,7 +8,7 @@ function memberButton(text, action, danger = false) {
 }
 async function allPages(path) {
   const result = [];
-  for (let page = 1; ; page++) { const rows = await api(`${path}?limit=100&page=${page}`); result.push(...rows); if (rows.length < 100) return result; }
+  for (let page = 1; ; page++) { const rows = await readPrefetched(`${path}?limit=100&page=${page}`); result.push(...rows); if (rows.length < 100) return result; }
 }
 function managesMembers() { return membersState.access?.permissions.includes('member.manage'); }
 function canManageRole(role) { return managesMembers() && (membersState.access.role === 'admin' || role !== 'admin'); }
@@ -39,6 +39,10 @@ function renderMembers() {
   }
   $('#invitation-section').hidden = !managesMembers();
   const inviteRole = $('#invite-form').elements.role; const previous = inviteRole.value || 'viewer'; inviteRole.replaceChildren(); roleOptions(inviteRole, previous); if (!inviteRole.value) inviteRole.value = 'viewer';
+  for (const control of $('#invite-form').elements) control.disabled = membersState.busy;
+  renderInvitations();
+}
+function renderInvitations() {
   const invites = $('#invitation-rows'); invites.replaceChildren();
   for (const invitation of membersState.invitations) {
     const tr = document.createElement('tr'); const actions = document.createElement('td'); actions.className = 'member-actions';
@@ -46,9 +50,8 @@ function renderMembers() {
     if (['pending', 'expired'].includes(invitation.status) && canManageRole(invitation.role)) actions.append(memberButton('Mời lại', () => mutateMembers(`/invitations/${invitation.invitation_id}/resend`, 'POST')));
     tr.append(element('td', '', invitation.email), element('td', '', roles[invitation.role] || invitation.role), element('td', '', expired ? 'Hết hạn' : memberStatuses[invitation.status] || invitation.status), actions); invites.append(tr);
   }
-  for (const control of $('#invite-form').elements) control.disabled = membersState.busy;
 }
-async function refreshMembers() {
+async function refreshMembers(workspaceAccess) {
   const version = ++membersState.version; const id = membersState.id;
   memberError(''); $('#members-status').textContent = 'Đang tải…';
   membersState.access = null; membersState.rows = []; membersState.invitations = [];
@@ -56,11 +59,25 @@ async function refreshMembers() {
   $('#member-rows').replaceChildren(); $('#invitation-section').hidden = true;
   try {
     const base = `/workspaces/${id}`;
-    const [ws, access, rows] = await Promise.all([api(base), api(base + '/access'), allPages(base + '/members')]);
-    const invitations = access.permissions.includes('member.manage') ? await allPages(base + '/invitations') : [];
-    if (version !== membersState.version || !$('#members-dialog').open) return;
-    Object.assign(membersState, { rows, invitations, access, owner: ws.owner_id });
+    const accessRequest = workspaceAccess
+      ? Promise.resolve(workspaceAccess)
+      : api(base + '/access?include_workspace=true');
+    const isCurrent = () => version === membersState.version && $('#members-dialog').open;
+    const invitationRequest = accessRequest.then(async access => {
+      if (!isCurrent() || !access.permissions.includes('member.manage')) return { rows: [] };
+      try { return { rows: await allPages(base + '/invitations') }; }
+      catch (error) { return { error }; }
+    }, () => ({ rows: [] }));
+    const [access, rows] = await Promise.all([accessRequest, allPages(base + '/members')]);
+    if (!isCurrent()) return;
+    const ws = access.workspace;
+    Object.assign(membersState, { rows, access, owner: ws.owner_id });
     $('#members-workspace').textContent = ws.name; renderMembers();
+    const invitations = await invitationRequest;
+    if (!isCurrent()) return;
+    if (invitations.error) { memberError(invitations.error.message); return; }
+    membersState.invitations = invitations.rows;
+    renderInvitations();
   } catch (error) { if (version === membersState.version) { membersState.access = null; membersState.rows = []; membersState.invitations = []; $('#member-rows').replaceChildren(); $('#members-status').textContent = ''; memberError(error.message); } }
 }
 async function mutateMembers(path, method, values) {
@@ -79,12 +96,13 @@ function confirmMember(text, action, unchanged = false) {
   $('#member-confirm-ok').onclick = () => { $('#member-confirm-dialog').close(); action(); };
 }
 $('#member-confirm-cancel').onclick = () => $('#member-confirm-dialog').close();
-$('#members-button').onclick = () => {
-  if (state.busy) return;
-  membersState.id = state.editing; $('#workspace-dialog').close(); $('#member-search').value = '';
-  membersState.rows = []; membersState.invitations = []; membersState.access = null;
-  $('#members-dialog').showModal(); refreshMembers();
-};
+function openMembers(id, access) {
+  membersState.id = id;
+  $('#member-search').value = '';
+  $('#members-workspace').textContent = access.workspace.name;
+  $('#members-dialog').showModal();
+  refreshMembers(access);
+}
 $('#close-members').onclick = () => { if (!membersState.busy) $('#members-dialog').close(); };
 $('#members-dialog').addEventListener('cancel', event => { if (membersState.busy) event.preventDefault(); });
 $('#members-dialog').addEventListener('close', () => { membersState.version++; });

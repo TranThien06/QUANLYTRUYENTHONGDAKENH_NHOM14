@@ -27,6 +27,8 @@ Mở terminal thứ hai, cũng tại thư mục dự án:
 
 Giữ cả hai terminal mở. Nhấn Ctrl+C để dừng từng tiến trình. Nếu server Express cũ đang chiếm cổng 3000, dừng nó trước khi chạy FastAPI.
 
+Để trình diễn kết nối Facebook, dừng API cũ và chạy `.\.venv\Scripts\python.exe -m app.server --demo`. Mở `http://localhost:3000` (hoặc cổng `PORT` đã cấu hình), rồi vào **Workspace → Quản lý kênh → Kết nối Facebook**. Dùng email hoặc số điện thoại giả và mã 4 chữ số, sau đó bấm **Tiếp tục** để lưu Page mẫu vào workspace.
+
 - Swagger để thử API: [http://localhost:3000/docs](http://localhost:3000/docs)
 - API hoạt động: [http://localhost:3000/health](http://localhost:3000/health)
 - MySQL kết nối được: [http://localhost:3000/ready](http://localhost:3000/ready)

@@ -9,12 +9,14 @@ const channelStatuses = {
 };
 const channelTypes = { page: 'Trang', business: 'Doanh nghiệp', creator: 'Nhà sáng tạo', profile: 'Cá nhân' };
 const channelSelection = $('#channel-selection');
-const channelConnect = $('#connect-channel');
+const channelConnect = $('#channel-connect-controls');
+const channelDemoDialog = $('#channel-demo-dialog');
+const channelDemoForm = $('#channel-demo-form');
+const channelDemoAccount = $('#channel-demo-account');
 let channelResult = null;
 let searchTimer;
 let channelDetailRequest = 0;
 const pageSize = 20;
-const platformPicker = $('#channel-platform-picker');
 let availablePlatforms = [];
 $('#channel-status').add(new Option('Đã thu hồi quyền', 'revoked'));
 
@@ -40,8 +42,7 @@ function renderChannels() {
     const icon = element('span', `channel-icon channel-${row.platform}`, ({ facebook: 'f', instagram: '◎', tiktok: '♪' })[row.platform]);
     icon.setAttribute('aria-hidden', 'true');
     const name = element('div');
-    const demo = row.external_account_id === `mock-${row.platform}`;
-    name.append(element('small', 'channel-platform', demo ? platform + ' · Kênh mẫu' : platform), element('h3', '', row.account_name));
+    name.append(element('small', 'channel-platform', platform), element('h3', '', row.account_name));
     identity.append(icon, name);
     if (row.avatar_url && /^https:\/\//i.test(row.avatar_url)) {
       const avatar = element('img', 'channel-avatar');
@@ -79,6 +80,13 @@ function renderChannels() {
   }
 }
 
+function channelListPath(workspaceId, page, query = '', platform = '', status = '') {
+  const filters = new URLSearchParams({ limit: pageSize, page, q: query, include_pagination: 'true' });
+  if (platform) filters.set('platform', platform);
+  if (status) filters.set('status', status);
+  return `/workspaces/${workspaceId}/social-accounts?${filters}`;
+}
+
 async function loadChannels() {
   const version = ++channelsState.version;
   const workspaceId = channelsState.workspaceId;
@@ -91,19 +99,14 @@ async function loadChannels() {
   $('#channel-list').setAttribute('aria-busy', 'true');
   $('#refresh-channels').disabled = true;
   try {
-    const filters = new URLSearchParams({ limit: pageSize, page, q: $('#channel-search').value.trim() });
-    if ($('#channel-platform').value) filters.set('platform', $('#channel-platform').value);
-    if ($('#channel-status').value) filters.set('status', $('#channel-status').value);
-    const path = `/workspaces/${workspaceId}/social-accounts?`;
-    const rows = await api(path + filters);
+    const path = channelListPath(workspaceId, page, $('#channel-search').value.trim(),
+      $('#channel-platform').value, $('#channel-status').value);
+    const { rows, has_next: hasNext } = await readPrefetched(path);
     if (version !== channelsState.version || !$('#channels-dialog').open) return;
     if (!rows.length && page > 1) {
       channelsState.page--;
       return loadChannels();
     }
-    filters.set('page', page + 1);
-    const hasNext = rows.length === pageSize && (await api(path + filters)).length > 0;
-    if (version !== channelsState.version || !$('#channels-dialog').open) return;
     channelsState.rows = rows;
     $('#channel-pagination').hidden = page === 1 && !hasNext;
     $('#channel-prev').disabled = page === 1;
@@ -123,7 +126,7 @@ async function loadChannels() {
   }
 }
 
-async function openChannels(workspaceId, name) {
+async function openChannels(workspaceId, name, workspaceAccess) {
   const opening = ++channelsState.opening;
   channelsState.workspaceId = workspaceId;
   channelsState.page = 1;
@@ -134,10 +137,7 @@ async function openChannels(workspaceId, name) {
   $('#channel-platform').value = '';
   $('#channel-pagination').hidden = true;
   $('#channel-detail').hidden = true;
-  platformPicker.hidden = true;
-  channelConnect.setAttribute('aria-expanded', 'false');
-  $('#channel-connect-controls').hidden = true;
-  $('#channel-connect-mode').hidden = true;
+  channelConnect.hidden = true;
   $('#channel-connect-error').hidden = true;
   channelConnect.disabled = false;
   availablePlatforms = [];
@@ -145,39 +145,35 @@ async function openChannels(workspaceId, name) {
   $('#channels-dialog').showModal();
   loadChannels();
   try {
-    const [access, ...capabilities] = await Promise.all([
-      api(`/workspaces/${workspaceId}/access`),
-      ...Object.keys(channelPlatforms).map(platform => api(`/platforms/${platform}/capabilities`))
+    const [access, capabilities] = await Promise.all([
+      workspaceAccess ?? api(`/workspaces/${workspaceId}/access`),
+      readPrefetched('/platforms/capabilities'),
     ]);
     if (opening !== channelsState.opening || !isCurrentChannels(workspaceId)) return;
     channelsState.canManage = access.permissions.includes('channel.manage');
     availablePlatforms = capabilities.filter(option => option.oauth_enabled);
-    const hasDemo = availablePlatforms.some(option => option.oauth_ready && option.mode === 'mock');
-    $('#channel-connect-mode').hidden = !hasDemo;
-    $('#channel-connect-controls').hidden = !channelsState.canManage && !hasDemo;
     channelConnect.hidden = !channelsState.canManage || !availablePlatforms.length;
     channelConnect.disabled = !availablePlatforms.some(option => option.oauth_ready);
-    const singlePlatform = availablePlatforms.length === 1 ? availablePlatforms[0].platform : null;
-    channelConnect.textContent = singlePlatform ? `Kết nối ${channelPlatforms[singlePlatform]}` : '+ Kết nối kênh';
-    for (const button of platformPicker.querySelectorAll('button')) {
+    if (channelsState.canManage && channelConnect.disabled) {
+      const reasons = availablePlatforms.map(option =>
+        `${channelPlatforms[option.platform]} — ${option.oauth_error || 'Kết nối chưa sẵn sàng.'}`);
+      showChannelError(reasons.length ? reasons.join(' · ') : 'Chưa bật kết nối cho nền tảng nào.');
+    }
+    for (const button of channelConnect.querySelectorAll('button')) {
       const option = availablePlatforms.find(item => item.platform === button.dataset.platform);
       button.hidden = !option;
       button.disabled = !option?.oauth_ready;
     }
-    if (!$('#refresh-channels').disabled) renderChannels();
+    if ($('#channel-list').getAttribute('aria-busy') === 'false') renderChannels();
     return channelsState.canManage;
   } catch (error) {
     if (isCurrentChannels(workspaceId)) showChannelError(error.message);
   }
 }
 
-$('#channels-button').onclick = () => {
-  if (state.busy || !state.editing) return;
-  $('#workspace-dialog').close();
-  openChannels(state.editing, form.elements.name.value);
-};
 $('#close-channels').onclick = () => $('#channels-dialog').close();
 $('#channels-dialog').addEventListener('close', () => {
+  channelDemoDialog.close();
   channelsState.version++;
   channelsState.opening++;
   channelDetailRequest++;
@@ -194,7 +190,7 @@ function filterChannels() {
 }
 $('#channel-search').oninput = () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(filterChannels, 250);
+  searchTimer = setTimeout(filterChannels, 120);
 };
 $('#channel-status').onchange = $('#channel-platform').onchange = filterChannels;
 $('#channel-prev').onclick = () => { channelsState.page--; loadChannels(); };
@@ -333,18 +329,71 @@ function resetChannelSelection() {
   $('#channel-choices').replaceChildren();
 }
 
-channelConnect.onclick = () => {
-  if (availablePlatforms.length === 1) {
-    startChannelConnection(availablePlatforms[0].platform);
+function connectSelectedPlatform(platform) {
+  const option = availablePlatforms.find(item => item.platform === platform);
+  if (!channelsState.canManage || channelConnect.disabled || !option?.oauth_ready) return;
+  if (option.mode === 'mock') {
+    channelDemoDialog.dataset.platform = platform;
+    $('#channel-demo-title').textContent = `Đăng nhập ${channelPlatforms[platform]} mô phỏng`;
+    channelDemoDialog.showModal();
+    channelDemoAccount.focus();
     return;
   }
-  platformPicker.hidden = !platformPicker.hidden;
-  channelConnect.setAttribute('aria-expanded', String(!platformPicker.hidden));
-  if (!platformPicker.hidden) platformPicker.querySelector('button').focus();
+  startChannelConnection(platform);
+}
+
+$('#cancel-facebook-demo').onclick = () => channelDemoDialog.close();
+channelDemoDialog.addEventListener('close', () => {
+  channelDemoForm.reset();
+  channelDemoAccount.setCustomValidity('');
+  $('#channel-demo-error').hidden = true;
+});
+channelDemoAccount.oninput = () => channelDemoAccount.setCustomValidity('');
+channelDemoForm.onsubmit = async event => {
+  event.preventDefault();
+  const account = channelDemoAccount.value.trim();
+  const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const phone = /^\+?[0-9]{9,15}$/;
+  if (!email.test(account) && !phone.test(account)) {
+    channelDemoAccount.setCustomValidity('Nhập email hoặc số điện thoại hợp lệ.');
+    channelDemoAccount.reportValidity();
+    return;
+  }
+  if (!channelDemoForm.reportValidity()) return;
+  const platform = channelDemoDialog.dataset.platform;
+  const workspaceId = channelsState.workspaceId;
+  const opening = channelsState.opening;
+  const submit = channelDemoForm.querySelector('[type=submit]');
+  const errorBox = $('#channel-demo-error');
+  if (submit.disabled) return;
+  submit.disabled = true;
+  errorBox.hidden = true;
+  const isCurrent = () => opening === channelsState.opening && isCurrentChannels(workspaceId);
+  try {
+    await api(`/workspaces/${workspaceId}/social-accounts/demo/${platform}`, { method: 'POST' });
+    if (!isCurrent()) return;
+    channelDemoDialog.close();
+    resetChannelSelection();
+    $('#channel-connect-error').hidden = true;
+    $('#channel-search').value = '';
+    $('#channel-status').value = 'connected';
+    $('#channel-platform').value = platform;
+    channelsState.page = 1;
+    notify(`Kết nối ${channelPlatforms[platform]} thành công.`);
+    loadChannels();
+  } catch (error) {
+    if (isCurrent() && channelDemoDialog.open) {
+      errorBox.textContent = error.message;
+      errorBox.hidden = false;
+    }
+  } finally {
+    submit.disabled = false;
+  }
 };
-platformPicker.onclick = event => {
+
+channelConnect.onclick = event => {
   const platform = event.target.dataset.platform;
-  if (platform && !channelConnect.disabled) startChannelConnection(platform);
+  if (platform) connectSelectedPlatform(platform);
 };
 
 async function startChannelConnection(platform, externalId = null) {
@@ -373,7 +422,7 @@ async function startChannelConnection(platform, externalId = null) {
 
 $('#cancel-channel-selection').onclick = () => {
   resetChannelSelection();
-  channelConnect.focus();
+  channelConnect.querySelector('button:not([hidden]):not(:disabled)')?.focus();
 };
 
 channelSelection.onsubmit = async event => {

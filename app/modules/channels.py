@@ -57,6 +57,11 @@ def platforms(user=Depends(current_user)):
         return ok(db.all("SELECT * FROM platforms WHERE is_active=1"))
 
 
+@router.get("/platforms/capabilities")
+def all_capabilities(user=Depends(current_user)):
+    return ok([social.capabilities(platform) for platform in ("facebook", "instagram", "tiktok")])
+
+
 @router.get("/platforms/{platform}/capabilities")
 def capabilities(platform: Platform, user=Depends(current_user)):
     return ok(social.capabilities(platform))
@@ -69,6 +74,7 @@ def list_accounts(
     platform: Platform | None = None,
     status: ConnectionStatus | None = None,
     q: Annotated[str, Query(max_length=255)] = "",
+    include_pagination: bool = False,
 ):
     clauses, params = [], [workspace_id]
     if platform:
@@ -83,17 +89,19 @@ def list_accounts(
         )
         params.append(q.strip())
     filters = "".join(" AND " + clause for clause in clauses)
+    limit, offset = paging.sql
     with transaction() as db:
-        return ok(
-            db.all(
-                f"""SELECT a.*,p.code platform,t.expires_at token_expires_at,t.scopes,
-                {EFFECTIVE_STATUS} connection_status
-                FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
-                LEFT JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
-                WHERE a.workspace_id=%s{filters} ORDER BY a.social_account_id LIMIT %s OFFSET %s""",
-                (*params, *paging.sql),
-            )
+        rows = db.all(
+            f"""SELECT a.*,p.code platform,t.expires_at token_expires_at,t.scopes,
+            {EFFECTIVE_STATUS} connection_status
+            FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
+            LEFT JOIN social_account_tokens t ON t.social_account_id=a.social_account_id
+            WHERE a.workspace_id=%s{filters} ORDER BY a.social_account_id LIMIT %s OFFSET %s""",
+            (*params, limit + int(include_pagination), offset),
         )
+    if include_pagination:
+        return ok({"rows": rows[:limit], "has_next": len(rows) > limit})
+    return ok(rows)
 
 
 ACCOUNT_ROUTE = "/workspaces/{workspace_id}/social-accounts/{account_id}"
@@ -220,6 +228,67 @@ def refresh_account(workspace_id: Id, account_id: Id, request: Request):
     return ok({"status": "connected", "expires_at": expires})
 
 
+def save_connected_account(db, workspace_id, request, item):
+    external_id = item["external_account_id"]
+    platform = db.one("SELECT platform_id FROM platforms WHERE code=%s", (item["platform"],))
+    linked_id = None
+    if item["platform"] == "instagram":
+        linked = db.one(
+            """SELECT a.social_account_id FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
+            WHERE a.workspace_id=%s AND a.external_account_id=%s AND p.code='facebook'
+            AND a.account_type='page' AND a.status='connected' FOR UPDATE""",
+            (workspace_id, item.get("linked_page_external_id")),
+        )
+        check(linked or settings.social_mode == "mock", 422, "LINK_PAGE_FIRST", "Kết nối Facebook Page liên kết trước")
+        linked_id = linked["social_account_id"] if linked else None
+    db.execute(
+        """INSERT INTO social_accounts(workspace_id,platform_id,external_account_id,account_name,account_type,avatar_url,linked_account_id,connected_by)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE account_name=VALUES(account_name),avatar_url=VALUES(avatar_url),linked_account_id=VALUES(linked_account_id),status='connected',status_message=NULL,disconnected_at=NULL,connected_by=VALUES(connected_by),connected_at=UTC_TIMESTAMP()""",
+        (
+            workspace_id,
+            platform["platform_id"],
+            external_id,
+            item["account_name"],
+            item["account_type"],
+            item.get("avatar_url"),
+            linked_id,
+            request.state.user["user_id"],
+        ),
+    )
+    saved = db.one(
+        "SELECT social_account_id FROM social_accounts WHERE workspace_id=%s AND platform_id=%s AND external_account_id=%s",
+        (workspace_id, platform["platform_id"], external_id),
+    )
+    expires = now() + timedelta(seconds=item["expires_in"]) if item.get("expires_in") else None
+    db.execute(
+        """INSERT INTO social_account_tokens(social_account_id,access_token_enc,refresh_token_enc,expires_at,scopes,token_type) VALUES (%s,%s,%s,%s,%s,%s)
+        ON DUPLICATE KEY UPDATE access_token_enc=VALUES(access_token_enc),refresh_token_enc=VALUES(refresh_token_enc),expires_at=VALUES(expires_at),scopes=VALUES(scopes),token_type=VALUES(token_type),last_refreshed_at=NULL,refresh_fail_count=0""",
+        (
+            saved["social_account_id"],
+            encrypt(item["access_token"]),
+            encrypt(item.get("refresh_token")),
+            expires,
+            item.get("scope"),
+            item.get("token_type"),
+        ),
+    )
+    audit(db, request, "channel.connect", "social_account", saved["social_account_id"])
+    return saved
+
+
+@router.post(
+    "/workspaces/{workspace_id}/social-accounts/demo/{platform}",
+    dependencies=[Depends(workspace("channel.manage"))],
+)
+def connect_demo(workspace_id: Id, platform: Platform, request: Request):
+    check(settings.social_mode == "mock", 403, "DEMO_DISABLED", "Kết nối mẫu chỉ dùng trong chế độ demo")
+    social.check_oauth_available(platform)
+    item, = social.exchange_code(platform, "mock", None)
+    with transaction() as db:
+        membership(db, workspace_id, request.state.user["user_id"], "channel.manage")
+        return ok(save_connected_account(db, workspace_id, request, item))
+
+
 @router.post(
     "/workspaces/{workspace_id}/social-accounts/oauth/complete-selection",
     dependencies=[Depends(workspace("channel.manage"))],
@@ -245,49 +314,7 @@ def complete_selection(workspace_id: Id, data: SelectionInput, request: Request)
                 "CHANNEL_MODE_MISMATCH",
                 "Chế độ kết nối đã thay đổi. Vui lòng bắt đầu lại",
             )
-            platform = db.one("SELECT platform_id FROM platforms WHERE code=%s", (item["platform"],))
-            linked_id = None
-            if item["platform"] == "instagram":
-                linked = db.one(
-                    """SELECT a.social_account_id FROM social_accounts a JOIN platforms p ON p.platform_id=a.platform_id
-                    WHERE a.workspace_id=%s AND a.external_account_id=%s AND p.code='facebook'
-                    AND a.account_type='page' AND a.status='connected' FOR UPDATE""",
-                    (workspace_id, item.get("linked_page_external_id")),
-                )
-                check(linked, 422, "LINK_PAGE_FIRST", "Kết nối Facebook Page liên kết trước")
-                linked_id = linked["social_account_id"]
-            db.execute(
-                """INSERT INTO social_accounts(workspace_id,platform_id,external_account_id,account_name,account_type,avatar_url,linked_account_id,connected_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE account_name=VALUES(account_name),avatar_url=VALUES(avatar_url),linked_account_id=VALUES(linked_account_id),status='connected',status_message=NULL,disconnected_at=NULL,connected_by=VALUES(connected_by),connected_at=UTC_TIMESTAMP()""",
-                (
-                    workspace_id,
-                    platform["platform_id"],
-                    external_id,
-                    item["account_name"],
-                    item["account_type"],
-                    item.get("avatar_url"),
-                    linked_id,
-                    request.state.user["user_id"],
-                ),
-            )
-            saved = db.one(
-                "SELECT social_account_id FROM social_accounts WHERE workspace_id=%s AND platform_id=%s AND external_account_id=%s",
-                (workspace_id, platform["platform_id"], external_id),
-            )
-            expires = now() + timedelta(seconds=item["expires_in"]) if item.get("expires_in") else None
-            db.execute(
-                """INSERT INTO social_account_tokens(social_account_id,access_token_enc,refresh_token_enc,expires_at) VALUES (%s,%s,%s,%s)
-                ON DUPLICATE KEY UPDATE access_token_enc=VALUES(access_token_enc),refresh_token_enc=VALUES(refresh_token_enc),expires_at=VALUES(expires_at),last_refreshed_at=NULL,refresh_fail_count=0""",
-                (
-                    saved["social_account_id"],
-                    encrypt(item["access_token"]),
-                    encrypt(item.get("refresh_token")),
-                    expires,
-                    item.get("scope"),
-                    item.get("token_type"),
-                ),
-            )
-            audit(db, request, "channel.connect", "social_account", saved["social_account_id"])
+            saved = save_connected_account(db, workspace_id, request, item)
             results.append(saved)
         db.execute("DELETE FROM oauth_connections WHERE connection_hash=%s", (row["connection_hash"],))
     return ok(results)

@@ -1,6 +1,7 @@
 'use strict';
 
 const publishDialog = $('#publish-dialog');
+const publishResultDialog = $('#publish-result-dialog');
 const publishPost = $('#publish-post');
 const publishChannels = $('#publish-channels');
 const publishNow = $('#publish-now');
@@ -22,6 +23,42 @@ function updatePublishButton() {
     !publishChannels.querySelector('input:checked:not(:disabled)');
 }
 
+function showPublishResult(title, message, button, failed = false) {
+  $('#publish-result-title').textContent = title;
+  const box = $('#publish-result-message');
+  box.textContent = message;
+  box.className = failed ? 'form-error' : 'notice';
+  $('#close-publish-result').textContent = button;
+  if (!publishResultDialog.open) publishResultDialog.showModal();
+}
+
+function showPublishSuccess(session) {
+  session.attempt = null;
+  showPostList();
+  publishPost.value = '';
+  publishPost.disabled = false;
+  publishChannels.disabled = false;
+  publishChannels.replaceChildren();
+  $('#publish-caption').hidden = true;
+  showPublicationError();
+  $('#publish-status').textContent = 'Đăng bài thành công.';
+  updatePublishButton();
+  showPublishResult('Đăng bài thành công', 'Bài đã đăng lên tất cả kênh bạn chọn.', 'Về Bài đăng');
+}
+
+function showPublishFailure(session, total, published, detail) {
+  session.attempt = null;
+  const summary = published
+    ? `Đã đăng thành công trên ${published}/${total} kênh. Các kênh còn lại đăng thất bại.`
+    : 'Không đăng được lên các kênh đã chọn.';
+  showPublishResult(
+    published ? 'Đăng bài thành công một phần' : 'Đăng bài thất bại',
+    detail ? summary + ' ' + detail : summary,
+    'Xem kết quả theo kênh',
+    true,
+  );
+}
+
 async function openPublishDialog(workspaceId, permissions) {
   const session = {
     base: '/workspaces/' + workspaceId,
@@ -35,6 +72,9 @@ async function openPublishDialog(workspaceId, permissions) {
   publishPost.replaceChildren(new Option('Chọn bài đăng', ''));
   publishNow.hidden = !session.canPublish;
   $('#new-post').hidden = !session.canCreate;
+  prefetchOnIntent($('#new-post'), () => ['social-accounts', 'media'].map(
+    resource => session.base + '/' + resource + '?limit=100&page=1',
+  ));
   publishChannels.replaceChildren();
   $('#publish-caption').hidden = true;
   $('#publish-status').textContent = 'Đang tải danh sách bài…';
@@ -43,16 +83,18 @@ async function openPublishDialog(workspaceId, permissions) {
   publishDialog.showModal();
   try {
     for (let page = 1; publication === session; page++) {
-      const posts = await api(session.base + '/posts?limit=100&page=' + page);
+      const posts = await readPrefetched(session.base + '/posts?limit=100&page=' + page);
       if (publication !== session) return;
+      const listed = new Set([...publishPost.options].map(option => option.value));
       for (const post of posts) {
-        if (![...publishPost.options].some(option => option.value === post.post_id)) {
+        if (!listed.has(post.post_id)) {
           publishPost.add(new Option(post.title || 'Bài #' + post.post_id, post.post_id));
+          listed.add(post.post_id);
         }
       }
       if (posts.length < 100) break;
     }
-    if (publication === session && !publishPost.value) {
+    if (publication === session && $('#publish-status').textContent === 'Đang tải danh sách bài…') {
       $('#publish-status').textContent = publishPost.options.length > 1 ? '' : 'Workspace chưa có bài đăng.';
     }
   } catch (error) {
@@ -78,6 +120,21 @@ async function refreshPublication() {
   try {
     const post = await api(session.base + '/posts/' + postId);
     if (!isCurrent()) return;
+    if (session.attempt?.postId === postId) {
+      const results = session.attempt.variantIds.map(id => {
+        const variant = post.variants.find(item => item.variant_id === id);
+        return variant?.status === 'published' ? variant : session.results[id]?.status === 'failed'
+          ? session.results[id] : variant;
+      });
+      const published = results.filter(result => result?.status === 'published').length;
+      if (published === results.length) {
+        showPublishSuccess(session);
+        return;
+      }
+      if (results.every(result => ['published', 'failed', 'cancelled'].includes(result?.status))) {
+        showPublishFailure(session, results.length, published, results.find(result => result.error_message)?.error_message);
+      }
+    }
     const caption = $('#publish-caption');
     caption.textContent = post.base_caption || '';
     caption.hidden = !caption.textContent;
@@ -141,7 +198,7 @@ function showCreatePostError(message = '') {
 
 async function readComposerOptions(base, resource, append, isCurrent) {
   for (let page = 1; isCurrent(); page++) {
-    const items = await api(base + '/' + resource + '?limit=100&page=' + page);
+    const items = await readPrefetched(base + '/' + resource + '?limit=100&page=' + page);
     if (!isCurrent()) return;
     for (const item of items) append(item);
     if (items.length < 100) return;
@@ -170,17 +227,22 @@ $('#new-post').onclick = async () => {
   $('#post-upload-retry').hidden = true;
   const channels = $('#create-post-channels');
   channels.replaceChildren();
-  createPostFields.disabled = true;
+  createPostFields.disabled = false;
+  createPostForm.elements.file.disabled = true;
   saveNewPost.disabled = true;
   $('#post-upload-section').hidden = !session.canUpload;
   $('#publish-form').hidden = true;
   $('#publish-title').textContent = 'Tạo bài mới';
   createPostForm.hidden = false;
   showCreatePostError();
-  $('#create-post-status').textContent = 'Đang tải kênh và thư viện…';
-  try {
-    await Promise.all([
-      readComposerOptions(session.base, 'social-accounts', channel => {
+  $('#create-post-status').textContent = 'Đang tải kênh…';
+  const mediaNotice = $('#post-media-empty');
+  mediaNotice.textContent = 'Đang tải thư viện…';
+  mediaNotice.hidden = false;
+  createPostForm.elements.title.focus();
+  const loadChannels = async () => {
+    try {
+      await readComposerOptions(session.base, 'social-accounts', channel => {
         if (channel.status !== 'connected') return;
         const row = element('div', 'publish-channel');
         const label = element('label', '');
@@ -191,26 +253,34 @@ $('#new-post').onclick = async () => {
         label.append(checkbox, document.createTextNode(channel.account_name + ' · ' + channel.platform));
         row.append(label);
         channels.append(row);
-      }, isCurrent),
-      readComposerOptions(session.base, 'media', addComposerMedia, isCurrent),
-    ]);
-    if (!isCurrent()) return;
-    createPostFields.disabled = false;
-    if (!createPostForm.elements.media.options.length) {
-      const empty = $('#post-media-empty');
-      empty.textContent = session.canUpload
+      }, isCurrent);
+      if (!isCurrent()) return;
+      composer.channelsReady = true;
+      saveNewPost.disabled = composer.busy || !channels.children.length;
+      $('#create-post-status').textContent = channels.children.length ? '' : 'Workspace chưa có kênh kết nối.';
+    } catch (error) {
+      if (!isCurrent()) return;
+      $('#create-post-status').textContent = '';
+      showCreatePostError(error.message);
+    }
+  };
+  const channelLoad = loadChannels();
+  try {
+    await readComposerOptions(session.base, 'media', media => addComposerMedia(media), isCurrent);
+    if (isCurrent() && !createPostForm.elements.media.options.length) {
+      mediaNotice.textContent = session.canUpload
         ? 'Thư viện chưa có tệp. Bạn có thể chọn ảnh hoặc video từ máy bên dưới.'
         : 'Thư viện chưa có tệp. Người có quyền quản lý thư viện có thể thêm ảnh hoặc video.';
-      empty.hidden = false;
     }
-    saveNewPost.disabled = !channels.children.length;
-    $('#create-post-status').textContent = channels.children.length ? '' : 'Workspace chưa có kênh kết nối.';
-    createPostForm.elements.title.focus();
   } catch (error) {
-    if (!isCurrent()) return;
-    $('#create-post-status').textContent = '';
-    showCreatePostError(error.message);
+    if (isCurrent()) {
+      mediaNotice.textContent = 'Không tải được đầy đủ thư viện: ' + error.message;
+      mediaNotice.hidden = false;
+    }
+  } finally {
+    if (isCurrent()) createPostForm.elements.file.disabled = false;
   }
+  await channelLoad;
 };
 
 $('#cancel-new-post').onclick = () => {
@@ -223,7 +293,7 @@ $('#cancel-new-post').onclick = () => {
 function setComposerBusy(composer, busy) {
   composer.busy = busy;
   createPostFields.disabled = busy;
-  saveNewPost.disabled = busy || !$('#create-post-channels').children.length;
+  saveNewPost.disabled = busy || !composer.channelsReady || !$('#create-post-channels').children.length;
   $('#cancel-new-post').disabled = busy;
   $('#close-publish').disabled = busy;
 }
@@ -328,6 +398,7 @@ createPostForm.onsubmit = async event => {
 };
 
 publishPost.onchange = () => {
+  publication.attempt = null;
   publication.results = {};
   publishChannels.replaceChildren();
   $('#publish-caption').hidden = true;
@@ -346,6 +417,7 @@ publishDialog.addEventListener('cancel', event => {
   if (publication?.composer?.busy) event.preventDefault();
 });
 publishDialog.addEventListener('close', () => {
+  publishResultDialog.close();
   publication = null;
   clearTimeout(publicationTimer);
   publishPost.disabled = false;
@@ -359,6 +431,7 @@ $('#publish-form').onsubmit = async event => {
   const session = publication;
   if (publishNow.disabled || !session?.canPublish) return;
   const variantIds = [...publishChannels.querySelectorAll('input:checked:not(:disabled)')].map(input => input.value);
+  const postId = publishPost.value;
   clearTimeout(publicationTimer);
   session.sending = true;
   publishPost.disabled = true;
@@ -367,18 +440,32 @@ $('#publish-form').onsubmit = async event => {
   showPublicationError();
   $('#publish-status').textContent = 'Đang gửi yêu cầu…';
   try {
-    const response = await api(session.base + '/posts/' + publishPost.value + '/publish', {
+    const response = await api(session.base + '/posts/' + postId + '/publish?finish_demo=true', {
       method: 'POST', body: JSON.stringify({ variant_ids: variantIds }),
     });
     if (publication !== session) return;
+    if (response.results.length === variantIds.length && response.results.every(result => result.status === 'published')) {
+      showPublishSuccess(session);
+      return;
+    }
     for (const result of response.results) session.results[result.variant_id] = result;
+    if (response.results.some(result => result.status === 'publishing')) {
+      session.attempt = { postId, variantIds };
+      $('#publish-status').textContent = 'Đang chờ kết quả theo kênh…';
+    } else {
+      showPublishFailure(session, variantIds.length, response.results.filter(result => result.status === 'published').length,
+        response.results.find(result => result.error_message)?.error_message);
+    }
     publishChannels.querySelectorAll('input:checked').forEach(input => { input.checked = false; });
   } catch (error) {
-    if (publication === session) showPublicationError(error.message);
+    if (publication === session) {
+      showPublicationError(error.message);
+      showPublishResult('Chưa xác nhận được kết quả đăng bài', error.message, 'Quay lại Bài đăng', true);
+    }
   } finally {
     if (publication === session) {
       session.sending = false;
-      await refreshPublication();
+      if (publishPost.value) await refreshPublication();
     }
   }
 };

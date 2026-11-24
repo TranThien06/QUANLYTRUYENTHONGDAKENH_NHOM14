@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, Request, Query
 from typing import Literal
 from pydantic import Field
 from app.common import Input, Id, Pagination, now, utc, ok
+from app.config import settings
 from app.db import json_value, transaction
 from app.dependencies import workspace
 from app.errors import ApiError, check
 from app.events import audit, change_status
+from app.jobs.publishing import publish_one
 from app.modules.posts import locked_post
 from app.modules.channels import account, credentials
 from app.publishing import validate_approval, validate_publish, enqueue, variant_context, aggregate
@@ -81,7 +83,7 @@ def publish_variant(db, post, variant, user_id):
 
 
 @router.post("/posts/{post_id}/publish", status_code=202, dependencies=[Depends(workspace("post.publish"))])
-def publish(workspace_id: Id, post_id: Id, request: Request, data: PublishInput | None = None):
+def publish(workspace_id: Id, post_id: Id, request: Request, data: PublishInput | None = None, finish_demo: bool = False):
     with transaction() as db:
         post = locked_post(db, request, post_id, "post.publish")
         check(
@@ -133,6 +135,26 @@ def publish(workspace_id: Id, post_id: Id, request: Request, data: PublishInput 
         if jobs:
             change_status(db, post, "publishing", user_id)
         audit(db, request, "post.publish", "post", post_id, new={"results": results})
+    if finish_demo and settings.social_mode == "mock" and jobs:
+        for job in jobs:
+            publish_one(job["job_id"])
+        job_ids = tuple(job["job_id"] for job in jobs)
+        placeholders = ",".join(["%s"] * len(job_ids))
+        with transaction() as db:
+            finished = {
+                row["job_id"]: row
+                for row in db.all(
+                    f"""SELECT j.job_id,v.status,j.error_code,j.error_message
+                    FROM publish_jobs j JOIN post_variants v ON v.variant_id=j.variant_id
+                    WHERE j.job_id IN ({placeholders})""",
+                    job_ids,
+                )
+            }
+        for result in results:
+            latest = finished.get(result.get("job_id"))
+            if latest:
+                result.update(latest)
+        jobs = [{"job_id": result["job_id"]} for result in results if result["status"] == "publishing"]
     return ok({"jobs": jobs, "results": results})
 
 

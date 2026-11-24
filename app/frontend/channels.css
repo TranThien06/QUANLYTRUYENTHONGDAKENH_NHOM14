@@ -14,7 +14,6 @@
 .channel-avatar{width:40px;height:40px;flex:none;border-radius:50%;object-fit:cover}
 #channel-detail{margin-top:16px}
 #channel-detail p{overflow-wrap:anywhere}
-#channel-connect-mode{color:var(--muted);font-size:12px}
 #channel-selection{margin-bottom:20px}
 #channel-choices{display:grid;gap:8px;max-height:240px;overflow:auto}
 #channel-choices label{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
