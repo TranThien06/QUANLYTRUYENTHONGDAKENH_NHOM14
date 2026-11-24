@@ -19,7 +19,7 @@ dialog{background:#0b142a;border-color:#264466;color:#f2f7ff;border-radius:10px;
 .publish-channel{padding:12px 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
 #publish-dialog .publish-channel label{display:flex;align-items:center;gap:8px;margin:0}
 #publish-dialog .publish-channel input{display:inline-block;width:auto;margin:0;accent-color:var(--purple);outline:revert}
-#create-post-form textarea{display:block;width:100%;margin-top:8px;padding:12px;border:1px solid #d7cddd;border-radius:5px;background:#faf5fc;color:var(--ink);font:inherit;resize:vertical}
+#create-post-form textarea{display:block;width:100%;margin-top:8px;padding:12px;border:1px solid #264466;border-radius:5px;background:#09172e;color:var(--ink);font:inherit;resize:vertical}
 #create-post-form legend{font-weight:550}
 .publish-caption{white-space:pre-wrap;overflow-wrap:anywhere;max-height:8rem;overflow:auto}
 #members-workspace{color:var(--muted);font-size:12px;margin:0 0 20px}
